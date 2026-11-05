@@ -1,6 +1,7 @@
 use super::*;
 use kb_packages::{build_manifest, sign_package, KeyPair, ManifestInput};
 use std::path::Path;
+use std::time::Duration;
 
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/acme-demo")
@@ -235,6 +236,12 @@ fn map_packages_places_and_ranges() {
     let d = route["route"]["distance_m"].as_f64().unwrap();
     assert!(d > 1800.0 && d < 2600.0, "two ~1 km legs: {d}");
     assert!(route["route"]["coordinates"].as_array().unwrap().len() >= 3);
+    assert!(engine.maps[0].router_loaded());
+    assert!(!engine.maps[0].unload_router_if_idle(Duration::from_secs(3600)), "recently used: kept");
+    assert!(engine.maps[0].unload_router_if_idle(Duration::ZERO), "idle: unloaded");
+    assert!(!engine.maps[0].router_loaded());
+    let again = get(&format!("{base}/api/route?from=30.2701,-97.7401&to=30.2799,-97.7301"));
+    assert!(again["route"]["distance_m"].as_f64().unwrap() > 1800.0, "reloads on demand");
     assert!(matches!(
         ureq::get(&format!("{base}/api/route?from=999,0&to=30,-97")).call().unwrap_err(),
         ureq::Error::Status(400, _)

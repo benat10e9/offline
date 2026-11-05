@@ -135,13 +135,47 @@ pub struct MapInfo {
     pub meta: serde_json::Value,
     pub routing: bool,
     #[serde(skip)]
-    router: Arc<std::sync::OnceLock<Option<kb_routing::Router>>>,
+    router: Arc<Mutex<RouterSlot>>,
 }
 
+#[derive(Default)]
+struct RouterSlot {
+    router: Option<Arc<kb_routing::Router>>,
+    last_used: Option<Instant>,
+}
+
+impl std::fmt::Debug for RouterSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouterSlot").field("loaded", &self.router.is_some()).finish()
+    }
+}
+
+/// A statewide road graph uses about 1.3 GB of RAM; drop it when nobody is navigating.
+pub const ROUTER_IDLE_UNLOAD: Duration = Duration::from_secs(600);
+
 impl MapInfo {
-    /// Load the road graph on first use (a statewide graph takes a few seconds).
-    pub fn router(&self) -> Option<&kb_routing::Router> {
-        self.router.get_or_init(|| kb_routing::Router::load(&self.dir.join(kb_routing::ROUTING_DIR)).ok()).as_ref()
+    /// Load the road graph on first use (a statewide graph takes several seconds).
+    pub fn router(&self) -> Option<Arc<kb_routing::Router>> {
+        let mut slot = self.router.lock().ok()?;
+        if slot.router.is_none() {
+            slot.router = kb_routing::Router::load(&self.dir.join(kb_routing::ROUTING_DIR)).ok().map(Arc::new);
+        }
+        slot.last_used = Some(Instant::now());
+        slot.router.clone()
+    }
+
+    pub fn router_loaded(&self) -> bool {
+        self.router.lock().map(|s| s.router.is_some()).unwrap_or(false)
+    }
+
+    /// Free the graph if unused for `idle`. Returns true if it was unloaded.
+    pub fn unload_router_if_idle(&self, idle: Duration) -> bool {
+        let Ok(mut slot) = self.router.lock() else { return false };
+        if slot.router.is_some() && slot.last_used.is_some_and(|t| t.elapsed() >= idle) {
+            slot.router = None;
+            return true;
+        }
+        false
     }
 }
 
@@ -213,7 +247,7 @@ impl Engine {
                                 dir: dir.join("maps"),
                                 meta,
                                 routing,
-                                router: Arc::new(std::sync::OnceLock::new()),
+                                router: Arc::new(Mutex::new(RouterSlot::default())),
                             });
                             places.extend(load_places(&dir.join("maps").join("gazetteer.jsonl")));
                         }
@@ -565,6 +599,16 @@ impl Running {
 
 /// Start serving on `bind` (use "127.0.0.1:0" for a free local port). Returns immediately.
 pub fn serve(engine: Arc<Engine>, bind: &str) -> anyhow::Result<Running> {
+    if engine.maps.iter().any(|m| m.routing) {
+        let e = Arc::downgrade(&engine);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(60));
+            let Some(engine) = e.upgrade() else { break };
+            for m in &engine.maps {
+                m.unload_router_if_idle(ROUTER_IDLE_UNLOAD);
+            }
+        });
+    }
     let server = Arc::new(tiny_http::Server::http(bind).map_err(|e| anyhow::anyhow!("bind {bind}: {e}"))?);
     let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(0);
     let s2 = server.clone();

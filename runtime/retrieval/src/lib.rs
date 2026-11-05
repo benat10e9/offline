@@ -29,6 +29,8 @@ pub enum RetrievalError {
     BadPassage { line: usize, source: serde_json::Error },
     #[error("duplicate passage id {0}")]
     DuplicatePassage(String),
+    #[error("passage line {line}: {msg}")]
+    Invalid { line: usize, msg: String },
     #[error("unknown package {0}")]
     UnknownPackage(String),
 }
@@ -133,6 +135,54 @@ pub fn build_index(out_dir: &Path, passages: &[Passage]) -> Result<usize, Retrie
     Ok(passages.len())
 }
 
+/// Stream `passages.jsonl` into a fresh index without holding it in memory.
+/// `check` sees every passage first (e.g. to validate source ids); an error stops the build.
+pub fn build_index_streaming(
+    out_dir: &Path,
+    passages_jsonl: &Path,
+    mut check: impl FnMut(&Passage) -> Result<(), String>,
+) -> Result<usize, RetrievalError> {
+    let dir = out_dir.join(INDEX_DIR);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    std::fs::create_dir_all(&dir)?;
+    let (schema, f) = schema();
+    let index = Index::create_in_dir(&dir, schema)?;
+    let mut writer = index.writer_with_num_threads(2, 400_000_000)?;
+    let mut seen = std::collections::HashSet::new();
+    let mut n = 0usize;
+    let file = std::fs::File::open(passages_jsonl)?;
+    for (i, line) in std::io::BufReader::new(file).lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let p: Passage =
+            serde_json::from_str(&line).map_err(|source| RetrievalError::BadPassage { line: i + 1, source })?;
+        check(&p).map_err(|msg| RetrievalError::Invalid { line: i + 1, msg })?;
+        if !seen.insert(p.passage_id.clone()) {
+            return Err(RetrievalError::DuplicatePassage(p.passage_id));
+        }
+        writer.add_document(doc!(
+            f.passage_id => p.passage_id.as_str(),
+            f.doc_id => p.doc_id.as_str(),
+            f.source_id => p.source_id.as_str(),
+            f.title => p.title.as_str(),
+            f.heading => p.heading.as_str(),
+            f.text => p.text.as_str(),
+        ))?;
+        n += 1;
+    }
+    writer.commit()?;
+    let ids = index.searchable_segment_ids()?;
+    if ids.len() > 1 {
+        writer.merge(&ids).wait()?;
+    }
+    writer.wait_merging_threads()?;
+    Ok(n)
+}
+
 /// A search result. `package_id` + `passage_id` is the citation key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Hit {
@@ -187,15 +237,16 @@ impl Library {
         self.packages.iter().map(|(id, _)| id.clone()).collect()
     }
 
-    /// BM25 search across every mounted package. Title and heading matches are boosted.
+    /// BM25 search across every mounted package over passage text, with a light title boost.
     /// Scores from different packages are merged directly; good enough for v0, revisit
     /// with a reranker once packages differ greatly in size.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Hit>, RetrievalError> {
         let mut all = Vec::new();
         for (pkg, m) in &self.packages {
-            let mut qp = QueryParser::for_index(&m.index, vec![m.fields.title, m.fields.heading, m.fields.text]);
-            qp.set_field_boost(m.fields.title, 2.0);
-            qp.set_field_boost(m.fields.heading, 1.5);
+            // Passage text already contains its headings; scoring the heading field and a
+            // heavily boosted title as well let one common title word outweigh rare body words.
+            let mut qp = QueryParser::for_index(&m.index, vec![m.fields.title, m.fields.text]);
+            qp.set_field_boost(m.fields.title, 1.2);
             let (q, _errors) = qp.parse_query_lenient(&sanitize_query(query));
             let searcher = m.reader.searcher();
             let top = searcher.search(&q, &TopDocs::with_limit(limit).order_by_score())?;
@@ -356,6 +407,22 @@ mod tests {
         let hits = lib.search("burn: (\"cool AND", 3).unwrap();
         assert!(!hits.is_empty());
         assert_eq!(sanitize_query("burn: (\"cool AND -x"), "burn cool x");
+    }
+
+    #[test]
+    fn streaming_build_matches_and_validates() {
+        let a = tempfile::tempdir().unwrap();
+        let jl = a.path().join("p.jsonl");
+        let ps =
+            [p("a1", "d1", "Burns", "Cool a burn under running water."), p("a2", "d1", "Burns", "Do not use ice.")];
+        std::fs::write(&jl, ps.iter().map(|x| serde_json::to_string(x).unwrap() + "\n").collect::<String>()).unwrap();
+        assert_eq!(build_index_streaming(a.path(), &jl, |_| Ok(())).unwrap(), 2);
+        let mut lib = Library::new();
+        lib.mount("m", a.path()).unwrap();
+        assert_eq!(lib.search("running water", 5).unwrap()[0].passage_id, "a1");
+        let err =
+            build_index_streaming(a.path(), &jl, |p| if p.passage_id == "a2" { Err("bad".into()) } else { Ok(()) });
+        assert!(matches!(err, Err(RetrievalError::Invalid { line: 2, .. })));
     }
 
     #[test]

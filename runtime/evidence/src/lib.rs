@@ -275,6 +275,9 @@ impl TermWeights for kb_retrieval::Library {
     }
 }
 
+/// A word must outweigh the next by this factor to be required in every passage.
+pub const ANCHOR_RATIO: f32 = 1.5;
+
 /// Share of the question's weight a passage must cover to count as relevant.
 pub const RELEVANCE_COVERAGE: f32 = 0.55;
 
@@ -287,11 +290,24 @@ pub fn relevance(question: &str, hit: &Hit, weights: &dyn TermWeights) -> f32 {
     }
     let h: HashSet<String> = words(&format!("{} {} {}", hit.title, hit.heading, hit.text)).map(|w| stem(&w)).collect();
     let (mut total, mut covered) = (0.0f32, 0.0f32);
+    let mut scored: Vec<(f32, bool)> = Vec::new();
     for (w, st) in &q {
         let wt = weights.weight(w).max(0.01);
         total += wt;
-        if h.contains(st) {
+        let hit_here = h.contains(st);
+        if hit_here {
             covered += wt;
+        }
+        scored.push((wt, hit_here));
+    }
+    // When one word dominates the question (the drug, the injury, the equipment), it
+    // must appear: a passage about some other drug's dose is not evidence, however much
+    // of the rest it shares. Near-ties (e.g. "warmth" vs "wilderness") fall back to coverage.
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    if let Some(&(top, top_hit)) = scored.first() {
+        let second = scored.get(1).map(|x| x.0).unwrap_or(0.0);
+        if top >= ANCHOR_RATIO * second && !top_hit {
+            return 0.0;
         }
     }
     covered / total

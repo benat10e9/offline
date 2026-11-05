@@ -84,11 +84,20 @@ jobs:
               | python3 -c "import sys,json;a=json.load(sys.stdin);print(a['class'], '|', '; '.join(h['title'] for h in a['citable'][:3]))" \
               | sed "s|^|$q -> |" | tee -a smoke.txt | tee -a "$GITHUB_STEP_SUMMARY"
           done
-      - name: Retrieval evaluation (report only)
+      - name: Retrieval evaluation (release gate)
         if: env.CAT == 'medical-survival'
         run: |
-          target/release/kb eval --root drive --questions evals/medical-survival.jsonl --out eval-report.json | tee eval.txt
+          set -o pipefail; target/release/kb eval --strict --root drive --questions evals/medical-survival.jsonl --out eval-report.json | tee eval.txt
           tail -1 eval.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish failure details
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo "run ${{ github.run_id }} failed"; df -h /; free -m; ls -la "src/$CAT" 2>/dev/null; tail -c 20000 build.log 2>/dev/null; \
+            cat "src/$CAT/report.json" 2>/dev/null; tail -50 eval.txt 2>/dev/null; } > "$CAT-failure.txt"
+          gh release view content-dev >/dev/null 2>&1 || gh release create content-dev --prerelease --title "Content (development builds)" --notes "dev"
+          gh release upload content-dev "$CAT-failure.txt" --clobber
       - name: Publish to content-dev release
         env:
           GH_TOKEN: ${{ github.token }}

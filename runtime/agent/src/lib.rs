@@ -304,7 +304,11 @@ pub fn search_only(
     ctx: &QuestionContext,
     opts: &AskOptions,
 ) -> Result<Assessment, AgentError> {
-    let hits = library.search(question, opts.retrieve)?;
+    // Search on what the question is about, not how it is phrased: "How do I…" in
+    // page titles otherwise outranks the passages that answer the question.
+    let terms: Vec<String> = kb_evidence::content_terms(question).into_iter().map(|(w, _)| w).collect();
+    let query = if terms.is_empty() { question.to_string() } else { terms.join(" ") };
+    let hits = library.search(&query, opts.retrieve)?;
     let mut a = assess(question, ctx, &hits, sources, library);
     a.citable.truncate(opts.max_passages);
     Ok(a)

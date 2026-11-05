@@ -8,7 +8,7 @@ use kb_evidence::QuestionContext;
 use kb_packages::{
     build_manifest, parse_public_key, sign_package, verify_package, KeyPair, ManifestInput, SourceRecord, VerifyMode,
 };
-use kb_retrieval::{build_index, read_passages, Library, PASSAGES_FILE};
+use kb_retrieval::{Library, PASSAGES_FILE};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -216,16 +216,10 @@ fn main() -> Result<()> {
             let sources: Vec<SourceRecord> =
                 serde_json::from_slice(&std::fs::read(src.join("sources.json"))?).context("sources.json")?;
             let has_passages = src.join(PASSAGES_FILE).is_file();
-            let passages = if has_passages { read_passages(&src.join(PASSAGES_FILE))? } else { Vec::new() };
-            let known: std::collections::HashSet<&str> = sources.iter().map(|s| s.id.as_str()).collect();
-            for p in &passages {
-                if !known.contains(p.source_id.as_str()) {
-                    bail!("passage {} references unknown source {}", p.passage_id, p.source_id);
-                }
-            }
+            let known: std::collections::HashSet<String> = sources.iter().map(|s| s.id.clone()).collect();
             for s in &sources {
                 if let Some(n) = &s.superseded_by {
-                    if !known.contains(n.as_str()) {
+                    if !known.contains(n) {
                         eprintln!("note: {} is superseded by {}, which is not in this package", s.id, n);
                     }
                 }
@@ -235,7 +229,13 @@ fn main() -> Result<()> {
             }
             std::fs::create_dir_all(&out)?;
             let n = if has_passages {
-                let n = build_index(&out, &passages)?;
+                let n = kb_retrieval::build_index_streaming(&out, &src.join(PASSAGES_FILE), |p| {
+                    if known.contains(&p.source_id) {
+                        Ok(())
+                    } else {
+                        Err(format!("passage {} references unknown source {}", p.passage_id, p.source_id))
+                    }
+                })?;
                 copy_file(&src.join(PASSAGES_FILE), &out.join(PASSAGES_FILE))?;
                 n
             } else {

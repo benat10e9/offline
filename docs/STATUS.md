@@ -37,6 +37,13 @@ Last updated: 2026-11-05 (session 3, part 2)
 - Fix: relevance now uses stems and rarity weights (IDF) — a passage must cover ≥55% of the question's distinctive weight; question-framing words ignored; 40 candidates retrieved instead of 20; MedlinePlus genetics and lab-test sections excluded (noise, and the source of a genetics page answering "severe bleeding").
 - Texas map package with routing: 1.6 GB on disk (1.0 GB compressed): tiles ~650 MB, routing ~950 MB (3.5 M junctions, 8.5 M edges; build 2 min 39 s, 4.5 GB peak RAM in CI); 27,657 places.
 
+**Session 3 (part 4) — retrieval quality:**
+- Eval on the real medical/survival package went 38/50 → **50/50**, expected source found 24/41 → **40/41**, out-of-scope verified 3 → **0**, unsafe 0. Fixes: search on content words only (titles like "How do I…" were outranking answers), light title boost and no separate heading field, stemmed IDF-weighted coverage, and a dominant-term anchor (a passage about another drug's dose no longer counts as evidence for an amoxicillin question).
+- One eval item corrected and logged (CDC covers Peru; the "capital of Peru" item was mislabeled). Results log in evals/README.md.
+- The eval is now a release gate in the content workflow (`--strict`).
+- `kb build` streams passages into the index (Wikipedia scale); failed content builds publish `<catalog>-failure.txt` to the release.
+- `cargo run -p kb-cli --example relevance_probe -- <pkg> "<question>"` shows scores and term weights.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)
@@ -47,7 +54,7 @@ Last updated: 2026-11-05 (session 3, part 2)
 
 ## Next
 
-1. Re-read the eval after the relevance fix; target ≥45/50 and zero out-of-scope verified before any model evaluation.
+1. Wikipedia package: read the build result (or its failure file) and size it.
 1b. Routing data is large (~950 MB, ~1 GB RAM when loaded): compress geometry and memory-map before it ships on 32 GB drives.
 2. Check the Texas routing build's memory/time and route quality on real trips.
 3. Drive composer: edition manifest → which packages and models go on a 32/64/128 GB drive.

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Offline Library</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <h1 class="brand">Offline Library</h1>
+    <div class="status" id="status" aria-live="polite">
+      <span class="pill" id="lib-status">Opening library…</span>
+      <span class="pill" id="model-status">Checking assistant…</span>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="ask" aria-label="Ask a question">
+      <form id="ask-form">
+        <label class="visually-hidden" for="question">Your question</label>
+        <textarea id="question" rows="2" maxlength="2000" placeholder="Ask about first aid, water, power, repairs…" required></textarea>
+        <details class="context" id="context">
+          <summary id="context-summary">Equipment and location: not set</summary>
+          <div class="context-fields">
+            <label>Equipment make <input id="asset-make" autocomplete="off" placeholder="e.g. Generac"></label>
+            <label>Model <input id="asset-model" autocomplete="off" placeholder="e.g. GP6500"></label>
+            <label>State
+              <select id="jurisdiction">
+                <option value="">Not set</option>
+              </select>
+            </label>
+          </div>
+          <p class="hint">Answers about specific equipment are only marked verified when that exact model's manual is installed.</p>
+        </details>
+        <div class="actions">
+          <button type="submit" id="ask-btn" class="primary">Ask</button>
+          <button type="button" id="search-btn">Search the library</button>
+        </div>
+      </form>
+      <div id="dev-warning" class="dev-warning" hidden>
+        This assistant model has not passed safety evaluation. Development use only.
+      </div>
+    </section>
+
+    <section id="results" class="results" aria-live="polite"></section>
+    <p id="empty" class="empty">Answers show which document they come from. Tap a source to read the original passage.</p>
+  </main>
+
+  <aside id="reader" class="reader" hidden aria-label="Source document">
+    <div class="reader-head">
+      <div>
+        <h2 id="reader-title"></h2>
+        <p id="reader-meta" class="reader-meta"></p>
+      </div>
+      <button type="button" id="reader-close" class="close" aria-label="Close source">Close</button>
+    </div>
+    <div id="reader-body" class="reader-body"></div>
+  </aside>
+</div>
+</body>
+</html>

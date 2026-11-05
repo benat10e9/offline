@@ -1,0 +1,86 @@
+name: app
+
+# Builds the desktop app and the kb tool, then publishes them to the app-dev release
+# that scripts/provision.sh and provision.ps1 download from.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["app/**", "runtime/**", "Cargo.*", ".github/workflows/app.yml"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: app (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, name: macos-arm64 }
+          - { os: windows-latest, name: windows-x86_64 }
+          - { os: ubuntu-22.04, name: linux-x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - name: Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+      - name: Build kb
+        run: cargo build --release -p kb-cli
+      - name: Build desktop app
+        working-directory: app
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            npx --yes @tauri-apps/cli@2 build --ci --bundles app
+          else
+            npx --yes @tauri-apps/cli@2 build --ci --no-bundle
+          fi
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir out
+          cp -R "app/src-tauri/target/release/bundle/macos/Offline Library.app" out/
+          cp target/release/kb out/
+          codesign --verify --deep "out/Offline Library.app" && echo "ad-hoc signature ok"
+          (cd out && zip -qry "../offline-library-${{ matrix.name }}.zip" .)
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory out | Out-Null
+          Copy-Item app/src-tauri/target/release/offline-library.exe "out/Offline Library.exe"
+          Copy-Item target/release/kb.exe out/
+          Compress-Archive -Path out/* -DestinationPath "offline-library-${{ matrix.name }}.zip"
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir out
+          cp app/src-tauri/target/release/offline-library out/
+          cp target/release/kb out/
+          (cd out && zip -qr "../offline-library-${{ matrix.name }}.zip" .)
+      - name: Sizes
+        shell: bash
+        run: ls -l offline-library-*.zip out/* | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Publish to app-dev release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view app-dev >/dev/null 2>&1 || \
+            gh release create app-dev --prerelease --title "App (development builds)" \
+              --notes "Unsigned development builds from main. Not for distribution."
+          gh release upload app-dev "offline-library-${{ matrix.name }}.zip" --clobber

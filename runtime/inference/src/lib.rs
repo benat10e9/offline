@@ -41,6 +41,9 @@ pub struct ModelEntry {
     /// Passed the safety eval for generated answers.
     #[serde(default)]
     pub safety_approved: bool,
+    /// SHA-256 of the GGUF file, recorded at provisioning.
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +264,7 @@ mod tests {
             context: 8192,
             license: "Apache-2.0".into(),
             safety_approved: ok,
+            sha256: None,
         }
     }
 

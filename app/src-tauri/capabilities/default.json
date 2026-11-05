@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "No IPC: the window only loads the local engine's web UI.",
+  "windows": ["main"],
+  "permissions": []
+}

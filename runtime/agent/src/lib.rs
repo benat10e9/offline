@@ -41,8 +41,40 @@ impl LlamaServer {
     }
 }
 
-impl ChatModel for LlamaServer {
-    fn chat(&self, system: &str, user: &str) -> Result<String, AgentError> {
+/// Speed figures for one generation, from llama-server's `usage` and `timings`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChatStats {
+    pub text: String,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    /// Prompt processing speed reported by llama-server.
+    pub prompt_tokens_per_second: Option<f64>,
+    /// Generation speed reported by llama-server.
+    pub generated_tokens_per_second: Option<f64>,
+    pub wall_seconds: f64,
+}
+
+impl LlamaServer {
+    /// Same request as `chat`, returning speed statistics. Used by `kb bench`.
+    pub fn chat_with_stats(&self, system: &str, user: &str) -> Result<ChatStats, AgentError> {
+        let start = std::time::Instant::now();
+        let resp = self.request(system, user)?;
+        let wall = start.elapsed().as_secs_f64();
+        let text = resp["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string();
+        let completion = resp["usage"]["completion_tokens"].as_u64();
+        Ok(ChatStats {
+            text,
+            prompt_tokens: resp["usage"]["prompt_tokens"].as_u64(),
+            completion_tokens: completion,
+            prompt_tokens_per_second: resp["timings"]["prompt_per_second"].as_f64(),
+            generated_tokens_per_second: resp["timings"]["predicted_per_second"]
+                .as_f64()
+                .or_else(|| completion.map(|c| c as f64 / wall.max(0.001))),
+            wall_seconds: wall,
+        })
+    }
+
+    fn request(&self, system: &str, user: &str) -> Result<serde_json::Value, AgentError> {
         let url = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
         let body = serde_json::json!({
             "messages": [
@@ -53,11 +85,18 @@ impl ChatModel for LlamaServer {
             "temperature": self.temperature,
             "stream": false
         });
-        let resp: serde_json::Value = ureq::post(&url)
+        ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(600))
             .send_json(body)
             .map_err(|e| AgentError::Model(e.to_string()))?
             .into_json()
-            .map_err(|e| AgentError::Model(e.to_string()))?;
+            .map_err(|e| AgentError::Model(e.to_string()))
+    }
+}
+
+impl ChatModel for LlamaServer {
+    fn chat(&self, system: &str, user: &str) -> Result<String, AgentError> {
+        let resp = self.request(system, user)?;
         resp["choices"][0]["message"]["content"]
             .as_str()
             .map(|s| s.to_string())
@@ -124,6 +163,12 @@ fn other_bracket_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"\[(?:source|Source|ref|Ref|\d{1,3})[^\]]{0,40}\]").expect("valid regex"))
 }
 
+fn think_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    // Reasoning blocks some models emit; also an unterminated block at the start.
+    RE.get_or_init(|| Regex::new(r"(?is)<think>.*?(?:</think>|\z)").expect("valid regex"))
+}
+
 fn sources_section_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?ims)^\s*(?:\*\*)?(?:sources|references)(?:\*\*)?\s*:.*\z").expect("valid regex"))
@@ -131,7 +176,8 @@ fn sources_section_re() -> &'static Regex {
 
 /// Check the model's markers against the passages it was shown.
 pub fn verify_citations(answer: &str, shown: &[Hit]) -> Verification {
-    let mut text = sources_section_re().replace(answer, "").trim().to_string();
+    let without_thinking = think_re().replace_all(answer, "");
+    let mut text = sources_section_re().replace(&without_thinking, "").trim().to_string();
     let mut invalid = Vec::new();
     for m in other_bracket_re().find_iter(&text) {
         invalid.push(m.as_str().to_string());
@@ -364,6 +410,14 @@ mod tests {
         );
         assert!(!v.text.contains("FEMA"));
         assert_eq!(v.uncited_sentences, vec!["Then wait thirty minutes for the engine to cool."]);
+    }
+
+    #[test]
+    fn strips_reasoning_blocks() {
+        let v = verify_citations("<think>maybe bleach?</think>Boil water for one minute [S1].", &[hit("a")]);
+        assert_eq!(v.text, "Boil water for one minute [S1].");
+        let v = verify_citations("<think>never closed", &[hit("a")]);
+        assert_eq!(v.text, "");
     }
 
     #[test]

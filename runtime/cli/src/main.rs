@@ -67,6 +67,32 @@ enum Cmd {
         model: Option<PathBuf>,
         question: String,
     },
+    /// Run the app engine and web UI from a drive or install folder (browser mode).
+    Serve {
+        /// Root of the drive layout (packages/, trust/, models/, bin/).
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long, default_value_t = 8765)]
+        port: u16,
+        /// Development only: allow models that have not passed safety evaluation.
+        #[arg(long)]
+        allow_unevaluated: bool,
+        /// Library search only; don't start the model.
+        #[arg(long)]
+        no_model: bool,
+    },
+    /// Measure disk footprint, model load time and speed; writes bench-report.json.
+    Bench {
+        #[arg(long)]
+        root: PathBuf,
+        /// Only this models.json id (default: every model in the catalog).
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        allow_unevaluated: bool,
+        #[arg(long, default_value = "bench-report.json")]
+        out: PathBuf,
+    },
     /// Print this machine's model tier from a models.json catalog.
     Tier {
         #[arg(long)]
@@ -243,6 +269,51 @@ fn main() -> Result<()> {
             let m = LlamaServer::new(url);
             let a = kb_agent::ask(&library, &sources, &m, &question, &ctx(&lib), &AskOptions::default())?;
             println!("{}", serde_json::to_string_pretty(&a)?);
+        }
+        Cmd::Serve { root, port, allow_unevaluated, no_model } => {
+            let engine = std::sync::Arc::new(kb_server::Engine::open(kb_server::Root::new(&root))?);
+            for p in &engine.problems {
+                eprintln!("NOT MOUNTED {}: {}", p.path, p.error);
+            }
+            eprintln!("library: {} package(s)", engine.packages.len());
+            let e2 = engine.clone();
+            std::thread::spawn(move || {
+                e2.start_model(&kb_server::EngineOptions { allow_unevaluated, no_model, ..Default::default() });
+                eprintln!("assistant: {:?}", e2.model_status());
+            });
+            let running = kb_server::serve(engine, &format!("127.0.0.1:{port}"))?;
+            println!("Open {}", running.url);
+            loop {
+                std::thread::park();
+            }
+        }
+        Cmd::Bench { root, model, allow_unevaluated, out } => {
+            let r = kb_server::bench(&kb_server::Root::new(&root), model.as_deref(), allow_unevaluated)?;
+            std::fs::write(&out, serde_json::to_vec_pretty(&r)?)?;
+            println!("{} {} with {} GB RAM", r.os, r.arch, r.ram_gb);
+            println!("disk footprint:");
+            let mut total = 0;
+            for (k, v) in &r.footprint_bytes {
+                total += v;
+                println!("  {k:<12} {:>9.1} MB", *v as f64 / 1e6);
+            }
+            println!("  {:<12} {:>9.1} MB", "total", total as f64 / 1e6);
+            for run in &r.runs {
+                println!("\nmodel {} ({:?})", run.model, run.backend);
+                println!("  load: {:.1}s  status: {:?}", run.load_seconds, run.status);
+                for s in &run.raw {
+                    println!(
+                        "  raw: {:.1} tok/s generated, {:.1} tok/s prompt, {:.1}s wall",
+                        s.generated_tokens_per_second.unwrap_or(0.0),
+                        s.prompt_tokens_per_second.unwrap_or(0.0),
+                        s.wall_seconds
+                    );
+                }
+                for a in &run.answers {
+                    println!("  {:>5.1}s {:?} {} cites  {}", a.seconds, a.class, a.citations, a.question);
+                }
+            }
+            println!("\nfull report: {}", out.display());
         }
         Cmd::Tier { catalog } => {
             let c = kb_inference::ModelCatalog::load(&catalog)?;

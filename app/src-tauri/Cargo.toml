@@ -1,0 +1,21 @@
+[package]
+name = "offline-library"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "LicenseRef-Proprietary"
+publish = false
+description = "Offline Library desktop shell"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+kb-server = { path = "../../runtime/server" }
+anyhow = "1"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

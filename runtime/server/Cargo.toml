@@ -1,0 +1,25 @@
+[package]
+name = "kb-server"
+description = "Local HTTP server and web UI: used by the desktop shell, browser mode and benchmarks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kb-packages.workspace = true
+kb-retrieval.workspace = true
+kb-evidence.workspace = true
+kb-agent.workspace = true
+kb-inference.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tiny_http.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+ureq.workspace = true

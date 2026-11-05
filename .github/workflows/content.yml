@@ -1,0 +1,89 @@
+name: content
+
+# Builds the medical/survival package from catalog/sources/medical-survival.json,
+# signs it with the development key, verifies it, measures it, and publishes it
+# to the content-dev release.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["catalog/sources/**", "factory/**", ".github/workflows/content.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  model-urls:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Model downloads used by provisioning still resolve
+        run: |
+          for u in \
+            https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf \
+            https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf; do
+            size=$(curl -sIL --fail "$u" | grep -i '^content-length' | tail -1 | tr -d '\r' | awk '{print $2}')
+            echo "$u  $((size / 1000000)) MB" | tee -a "$GITHUB_STEP_SUMMARY"
+            [ "${size:-0}" -gt 1000000000 ] || { echo "unexpected size"; exit 1; }
+          done
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y poppler-utils
+          pip install libzim lxml
+      - name: Factory tests
+        run: python3 -m unittest factory/test_factory.py
+      - name: Build kb
+        run: cargo build --release -p kb-cli
+      - name: Acquire and convert sources
+        run: python3 factory/build_package.py catalog/sources/medical-survival.json --work work --out src/medical-survival
+      - name: Index, sign, verify
+        env:
+          KB_DEV_SIGNING_KEY: ${{ secrets.KB_DEV_SIGNING_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$KB_DEV_SIGNING_KEY" > dev.key
+          mkdir -p pkgs
+          target/release/kb build --src src/medical-survival --out pkgs/medical-survival --key dev.key
+          rm -f dev.key
+          target/release/kb verify --full --pkg pkgs/medical-survival --trust trust/dev-publisher.pub
+      - name: Measure
+        run: |
+          {
+            echo "### Package size"
+            echo '```'
+            du -sh pkgs/medical-survival pkgs/medical-survival/index pkgs/medical-survival/passages.jsonl
+            echo '```'
+            echo "### Sources"
+            echo '```'
+            python3 -c "import json;r=json.load(open('src/medical-survival/report.json'));[print(f'{k:<20} {v[\"documents\"]:>6} docs {v[\"passages\"]:>7} passages {v[\"chars\"]/1e6:>7.1f} M chars') for k,v in r['sources'].items()];print('FAILED:', r['failed'])"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Smoke test search
+        run: |
+          mkdir -p drive/packages drive/trust
+          cp -R pkgs/medical-survival drive/packages/
+          cp trust/dev-publisher.pub drive/trust/
+          for q in "How do I stop severe bleeding?" "How long should I boil water to make it safe?" "What are signs of heat stroke?"; do
+            target/release/kb search --pkg pkgs/medical-survival --trust trust/dev-publisher.pub "$q" \
+              | python3 -c "import sys,json;a=json.load(sys.stdin);print(a['class'], '|', '; '.join(h['title'] for h in a['citable'][:3]))" \
+              | sed "s|^|$q -> |" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Publish to content-dev release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar czf packages.tar.gz -C pkgs .
+          ls -l packages.tar.gz | tee -a "$GITHUB_STEP_SUMMARY"
+          gh release view content-dev >/dev/null 2>&1 || \
+            gh release create content-dev --prerelease --title "Content (development builds)" \
+              --notes "Signed with the development key. Not for distribution."
+          gh release upload content-dev packages.tar.gz trust/dev-publisher.pub src/medical-survival/report.json --clobber

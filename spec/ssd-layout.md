@@ -12,6 +12,10 @@
   private/                                        portable vault (ADR 0007)
   updates/                                        staged bundles and previous versions
   LICENSES/                                       notices and GPL source offers
+  Offline Library.app | Offline Library.exe       desktop app (finds this root by walking up from itself)
+  DEV_ALLOW_UNEVALUATED                           development drives only: allow models not yet safety-approved
 ```
+
+`scripts/provision.sh` (macOS, Linux) and `scripts/provision.ps1` (Windows) create this layout.
 
 `<os>` is `macos`, `windows` or `linux`; `<arch>` is Rust's `std::env::consts::ARCH` (`aarch64`, `x86_64`).

@@ -1,0 +1,228 @@
+// All text from the library or the model is inserted with textContent, never as HTML.
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","DC","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"];
+const LABEL = {
+  verified: "Verified",
+  partial: "Partially supported",
+  unsupported: "Not supported by the library",
+};
+
+function el(tag, attrs = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v;
+    else if (k === "on") for (const [ev, fn] of Object.entries(v)) n.addEventListener(ev, fn);
+    else n.setAttribute(k, v);
+  }
+  for (const c of children.flat()) if (c != null) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return n;
+}
+
+function store(key, value) {
+  try { if (value === undefined) return localStorage.getItem(key) || ""; localStorage.setItem(key, value); } catch { return ""; }
+  return "";
+}
+
+// ---------- context (equipment + state) ----------
+function setupContext() {
+  const sel = $("jurisdiction");
+  for (const s of STATES) sel.append(el("option", { value: "US-" + s }, s));
+  $("asset-make").value = store("asset-make");
+  $("asset-model").value = store("asset-model");
+  sel.value = store("jurisdiction");
+  for (const id of ["asset-make", "asset-model", "jurisdiction"]) {
+    $(id).addEventListener("change", () => { store(id, $(id).value); summarizeContext(); });
+  }
+  summarizeContext();
+}
+
+function slug(s) { return s.trim().toLowerCase().split(/\s+/).filter(Boolean).join("-"); }
+
+function context() {
+  const make = slug($("asset-make").value), model = slug($("asset-model").value);
+  return {
+    asset: make && model ? `${make}:${model}` : null,
+    jurisdiction: $("jurisdiction").value || null,
+  };
+}
+
+function summarizeContext() {
+  const make = $("asset-make").value.trim(), model = $("asset-model").value.trim();
+  const st = $("jurisdiction").value.replace("US-", "");
+  const parts = [];
+  if (make && model) parts.push(`${make} ${model}`);
+  if (st) parts.push(st);
+  $("context-summary").textContent = parts.length ? `Equipment and location: ${parts.join(", ")}` : "Equipment and location: not set";
+}
+
+// ---------- status ----------
+async function refreshStatus() {
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+    const passages = s.packages.reduce((a, p) => a + p.passages, 0);
+    const lib = $("lib-status");
+    lib.textContent = s.packages.length
+      ? `Library: ${s.packages.length} package${s.packages.length > 1 ? "s" : ""}, ${passages.toLocaleString()} passages`
+      : "Library: nothing installed";
+    lib.className = "pill" + (s.packages.length ? " ok" : " warn");
+    if (s.problems.length) { lib.textContent += `, ${s.problems.length} failed verification`; lib.className = "pill warn"; }
+
+    const m = s.model, ms = $("model-status");
+    const text = {
+      ready: () => `Assistant ready (${m.backend})`,
+      starting: () => "Assistant starting…",
+      search_only: () => "Library search only",
+      failed: () => "Assistant failed to start",
+    }[m.state];
+    ms.textContent = text ? text() : "Assistant busy";
+    ms.title = m.reason || m.error || m.model || "";
+    ms.className = "pill" + (m.state === "ready" ? " ok" : m.state === "starting" ? "" : " warn");
+    $("dev-warning").hidden = !(m.state === "ready" && m.unevaluated);
+    if (m.state === "starting") setTimeout(refreshStatus, 2000);
+  } catch {
+    $("model-status").textContent = "App engine not responding";
+    $("model-status").className = "pill warn";
+  }
+}
+
+// ---------- rendering ----------
+function bandFor(cls, sources, extra) {
+  const primary = sources[0];
+  let detail;
+  if (cls === "verified") detail = primary ? `From ${primary.title}` : "From an applicable official document";
+  else if (cls === "partial") detail = "Related material only. Not the exact document for your question.";
+  else detail = "Nothing installed answers this reliably.";
+  if (extra) detail = extra;
+  return el("div", { class: `band ${cls}` }, el("strong", {}, LABEL[cls]), el("span", {}, detail));
+}
+
+function renderAnswerText(text, citations, consulted, card) {
+  const body = el("div", { class: "body" });
+  const byMarker = new Map(citations.map((c) => [c.marker, c]));
+  const parts = text.split(/(\[S\d{1,3}\])/g);
+  for (const part of parts) {
+    const m = part.match(/^\[S(\d{1,3})\]$/);
+    if (m && byMarker.has(Number(m[1]))) {
+      const n = Number(m[1]);
+      const hit = consulted[n - 1];
+      body.append(el("button", {
+        class: "cite", type: "button", "aria-label": `Open source ${n}: ${hit ? hit.title : ""}`,
+        on: { click: () => openReader(hit) },
+      }, String(n)));
+    } else if (part) {
+      body.append(document.createTextNode(part));
+    }
+  }
+  card.append(body);
+}
+
+function renderSources(hits, card, heading, withPreview) {
+  if (!hits.length) return;
+  const list = el("ol");
+  hits.forEach((h) => {
+    const item = el("li", {},
+      el("button", { type: "button", on: { click: () => openReader(h) } }, h.title || h.doc_id),
+      h.heading ? el("span", { class: "heading" }, `, ${h.heading}`) : null);
+    if (withPreview) item.append(el("p", { class: "passage-preview" }, h.text.slice(0, 260) + (h.text.length > 260 ? "…" : "")));
+    list.append(item);
+  });
+  card.append(el("div", { class: "sources" }, el("h3", {}, heading), list));
+}
+
+function renderNotes(notes, card) {
+  if (notes && notes.length) card.append(el("ul", { class: "notes" }, notes.map((n) => el("li", {}, n))));
+}
+
+function newCard(question) {
+  const card = el("article", { class: "answer new" }, el("p", { class: "q" }, question));
+  $("results").prepend(card);
+  $("empty").hidden = true;
+  return card;
+}
+
+function renderResponse(card, data) {
+  card.querySelector(".band")?.remove();
+  if (data.mode === "answer") {
+    const a = data.answer;
+    const cited = a.citations.map((c) => a.consulted[c.marker - 1]).filter(Boolean);
+    card.append(bandFor(a.class, cited));
+    renderNotes(a.notes, card);
+    if (a.text) renderAnswerText(a.text, a.citations, a.consulted, card);
+    renderSources(a.consulted, card, a.text ? "Sources consulted" : "Closest passages in the library", !a.text);
+  } else {
+    const s = data.assessment;
+    const reason = data.status && (data.status.reason || data.status.error);
+    card.append(bandFor(s.class, s.citable.filter((h) => s.verified_keys.includes(`${h.package_id}/${h.passage_id}`)),
+      reason ? `Showing library passages. ${reason}` : null));
+    renderNotes(s.notes, card);
+    renderSources(s.citable, card, "Passages from the library", true);
+  }
+}
+
+async function submit(kind) {
+  const q = $("question").value.trim();
+  if (!q) { $("question").focus(); return; }
+  const card = newCard(q);
+  card.append(el("div", { class: "band pending" }, el("strong", {}, kind === "ask" ? "Reading the library…" : "Searching…")));
+  for (const b of ["ask-btn", "search-btn"]) $(b).disabled = true;
+  try {
+    const r = await fetch(kind === "ask" ? "/api/ask" : "/api/search", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, ...context() }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
+    renderResponse(card, kind === "ask" ? data : { mode: "search_only", assessment: data });
+  } catch (e) {
+    card.querySelector(".band")?.remove();
+    card.append(el("div", { class: "band unsupported" }, el("strong", {}, "The request did not complete"), el("span", {}, String(e.message || e))));
+  } finally {
+    for (const b of ["ask-btn", "search-btn"]) $(b).disabled = false;
+    refreshStatus();
+  }
+}
+
+// ---------- reader ----------
+async function openReader(hit) {
+  if (!hit) return;
+  const r = await fetch(`/api/document?package=${encodeURIComponent(hit.package_id)}&doc=${encodeURIComponent(hit.doc_id)}`);
+  const data = await r.json();
+  $("reader-title").textContent = hit.title || hit.doc_id;
+  const s = data.source;
+  $("reader-meta").textContent = s
+    ? [s.publisher, s.revision, `License: ${s.license}`].filter(Boolean).join(". ")
+    : "";
+  const body = $("reader-body");
+  body.replaceChildren();
+  let target = null, lastHeading = "";
+  for (const p of data.passages || []) {
+    if (p.heading && p.heading !== lastHeading) { body.append(el("h4", {}, p.heading)); lastHeading = p.heading; }
+    const para = el("p", { class: p.passage_id === hit.passage_id ? "cited" : "" }, p.text);
+    if (p.passage_id === hit.passage_id) target = para;
+    body.append(para);
+  }
+  $("reader").hidden = false;
+  document.querySelector(".shell").classList.add("reading");
+  if (target) target.scrollIntoView({ block: "center" });
+  $("reader-close").focus();
+}
+
+function closeReader() {
+  $("reader").hidden = true;
+  document.querySelector(".shell").classList.remove("reading");
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  setupContext();
+  refreshStatus();
+  $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); submit("ask"); });
+  $("search-btn").addEventListener("click", () => submit("search"));
+  $("question").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit("ask"); }
+  });
+  $("reader-close").addEventListener("click", closeReader);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("reader").hidden) closeReader(); });
+});

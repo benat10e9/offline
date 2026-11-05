@@ -1,11 +1,13 @@
 [workspace]
 resolver = "2"
+exclude = ["app/src-tauri"]
 members = [
   "runtime/packages",
   "runtime/retrieval",
   "runtime/evidence",
   "runtime/agent",
   "runtime/inference",
+  "runtime/server",
   "runtime/cli",
 ]
 
@@ -22,6 +24,7 @@ kb-retrieval = { path = "runtime/retrieval" }
 kb-evidence = { path = "runtime/evidence" }
 kb-agent = { path = "runtime/agent" }
 kb-inference = { path = "runtime/inference" }
+kb-server = { path = "runtime/server" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -37,3 +40,4 @@ ureq = { version = "2", features = ["json"] }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 regex = "1"
 tempfile = "3"
+tiny_http = "0.12"

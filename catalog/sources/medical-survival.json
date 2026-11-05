@@ -1,0 +1,145 @@
+{
+  "package": {
+    "id": "medical-survival",
+    "version": "0.1.0-dev",
+    "title": "Medical, first aid and emergency preparedness (U.S. government sources)",
+    "editions": ["consumer", "police", "military", "ems"]
+  },
+  "rights_policy": "Only U.S. federal government works (17 U.S.C. 105) in this package. Third-party material inside them is excluded where identified. Checked 2026-11-05; recheck before each release.",
+  "sources": [
+    {
+      "id": "medlineplus",
+      "kind": "zim",
+      "zim": "medlineplus.gov_en_all",
+      "flavour": "",
+      "title": "MedlinePlus (NLM-written pages)",
+      "publisher": "U.S. National Library of Medicine",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "skip": "/(ency|druginfo)/|^[^/]+/[a-z]{2}(-[a-z]+)?/|/(es|spanish|espanol|languages|translations)(/|$)",
+      "rights_note": "NLM-authored pages are public domain. A.D.A.M. encyclopedia (/ency/), ASHP drug monographs and Natural Medicines (/druginfo/) are licensed to NLM by third parties and are excluded."
+    },
+    {
+      "id": "ready-gov",
+      "kind": "zim",
+      "zim": "ready.gov_en_all",
+      "flavour": "",
+      "title": "Ready.gov",
+      "publisher": "FEMA",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "skip": "^[^/]+/[a-z]{2}(-[a-z]+)?/|/(es|spanish|espanol|languages|translations)(/|$)",
+      "rights_note": "FEMA web content, public domain."
+    },
+    {
+      "id": "cdc-travel",
+      "kind": "zim",
+      "zim": "wwwnc.cdc.gov_en_all",
+      "flavour": "",
+      "title": "CDC Travelers' Health",
+      "publisher": "U.S. Centers for Disease Control and Prevention",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "skip": "^[^/]+/[a-z]{2}(-[a-z]+)?/|/(es|spanish|espanol|languages|translations)(/|$)",
+      "rights_note": "CDC web content, public domain. The printed Yellow Book is published by Oxford University Press; only the online CDC text is used."
+    },
+    {
+      "id": "afh-10-644",
+      "kind": "pdf",
+      "title": "AFH 10-644: SERE Operations",
+      "publisher": "U.S. Air Force",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://static.e-publishing.af.mil/production/1/af_a3/publication/afh10-644/afh10-644.pdf",
+      "fallback": "https://web.archive.org/web/2025id_/https://static.e-publishing.af.mil/production/1/af_a3/publication/afh10-644/afh10-644.pdf"
+    },
+    {
+      "id": "atp-3-50-21",
+      "kind": "pdf",
+      "title": "ATP 3-50.21: Survival",
+      "publisher": "U.S. Army",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://armypubs.army.mil/epubs/DR_pubs/DR_a/pdf/web/ARN12086_ATP%203-50x21%20FINAL%20WEB%202.pdf"
+    },
+    {
+      "id": "atp-4-02-11",
+      "kind": "pdf",
+      "title": "ATP 4-02.11: Casualty Response, Tactical Combat Casualty Care and First Aid",
+      "publisher": "U.S. Army",
+      "revision": "2026",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://armypubs.army.mil/epubs/DR_pubs/DR_a/ARN46159-ATP_4-02.11-000-WEB-1.pdf"
+    },
+    {
+      "id": "tc-21-3",
+      "kind": "pdf",
+      "title": "TC 21-3: Cold Weather Survival and Operations",
+      "publisher": "U.S. Army",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://armypubs.army.mil/epubs/DR_pubs/DR_a/ARN45217-TC_21-3-000-WEB-1.pdf"
+    },
+    {
+      "id": "atp-4-25-12",
+      "kind": "pdf",
+      "title": "ATP 4-25.12: Unit Field Sanitation",
+      "publisher": "U.S. Army",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://armypubs.army.mil/epubs/DR_pubs/DR_a/ARN44577-ATP_4-25.12-002-WEB-3.pdf"
+    },
+    {
+      "id": "tb-med-577",
+      "kind": "pdf",
+      "title": "TB MED 577: Sanitary Control and Surveillance of Field Water Supplies",
+      "publisher": "U.S. Army",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://armypubs.army.mil/epubs/DR_pubs/DR_a/pdf/web/tbmed577.pdf"
+    },
+    {
+      "id": "tb-med-507",
+      "kind": "pdf",
+      "title": "TB MED 507: Heat Stress Control and Heat Casualty Management",
+      "publisher": "U.S. Army",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://armypubs.army.mil/epubs/DR_pubs/DR_a/ARN43608-TB_MED_507-001-WEB-2.pdf"
+    },
+    {
+      "id": "fema-are-you-ready",
+      "kind": "pdf",
+      "title": "Are You Ready? An In-Depth Guide to Citizen Preparedness",
+      "publisher": "FEMA",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://www.ready.gov/sites/default/files/2021-11/are-you-ready-guide.pdf"
+    },
+    {
+      "id": "fema-cert-basic",
+      "kind": "pdf",
+      "title": "CERT Basic Training Participant Manual",
+      "publisher": "FEMA",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://www.ready.gov/sites/default/files/2019.CERT_.Basic_.PM_FINAL_508c.pdf"
+    },
+    {
+      "id": "jts-pcc",
+      "kind": "pdf",
+      "title": "Joint Trauma System: Prolonged Casualty Care Guidelines",
+      "publisher": "U.S. Department of Defense, Joint Trauma System",
+      "revision": "2021-12-21",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://jts.health.mil/assets/docs/cpgs/Prolonged_Casualty_Care_Guidelines_21_Dec_2021_ID91v1.1.pdf"
+    }
+  ],
+  "excluded": [
+    {"title": "Emergency Response Guidebook 2024", "reason": "Reproduction permitted but 'not for resale'; needs legal review for a paid product."},
+    {"title": "Nuclear War Survival Skills (1987 edition)", "reason": "1986 additions are copyright Cresson H. Kearny."},
+    {"title": "IFRC, WHO and Hesperian guides", "reason": "Non-commercial or all-rights-reserved terms."}
+  ]
+}

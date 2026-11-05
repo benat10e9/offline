@@ -21,10 +21,24 @@ Proprietary. All rights reserved.
 | `runtime/evidence` | Verified / partial / unsupported classification | Yes |
 | `runtime/agent` | Prompting, llama-server client, citation verifier | Yes |
 | `runtime/inference` | llama-server supervisor, hardware tiers | Yes |
-| `runtime/cli` | `kb` command: keygen, build, verify, search, ask, tier | Yes |
+| `runtime/server` | App engine, local HTTP API and web UI, benchmark | Yes |
+| `runtime/cli` | `kb` command: keygen, build, verify, search, ask, serve, bench, tier | Yes |
+| `app/` | Tauri desktop shell (Mac, Windows, Linux) | Yes |
+| `scripts/` | Drive provisioning for macOS/Linux and Windows | Tooling |
+| `trust/` | Development publisher public key | Yes (dev drives) |
 | `fixtures/` | Fictional test corpus | No |
-| `factory/` | Content pipeline (Python) | No |
-| `catalog/` | Source, model and edition catalogs | Data |
+| `factory/` | Content pipeline (Python): fetch, extract, split, rights report | No |
+| `catalog/` | Rights catalogs per package, model catalog example | Data |
+
+## Set up a test drive
+
+```sh
+scripts/provision.sh ~/OfflineLibrary          # macOS or Linux; Windows: scripts\provision.ps1 E:\
+open ~/OfflineLibrary/Offline\ Library.app
+~/OfflineLibrary/bin/macos-aarch64/kb bench --root ~/OfflineLibrary --allow-unevaluated
+```
+
+Builds come from the `app-dev` and `content-dev` releases, produced by the `app` and `content` workflows.
 
 ## Try it
 

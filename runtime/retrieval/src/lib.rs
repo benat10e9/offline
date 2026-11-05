@@ -247,6 +247,21 @@ impl Library {
         Ok(out.into_iter().map(|(_, h)| h).collect())
     }
 
+    /// Inverse document frequency of a lowercase word across all mounted packages
+    /// (BM25 form). Rare, distinctive words score high; filler words score low.
+    pub fn idf(&self, word: &str) -> f32 {
+        let (mut n, mut df) = (0u64, 0u64);
+        for (_, m) in &self.packages {
+            let searcher = m.reader.searcher();
+            n += searcher.num_docs();
+            df += searcher.doc_freq(&Term::from_field_text(m.fields.text, word)).unwrap_or(0);
+        }
+        if n == 0 {
+            return 1.0;
+        }
+        (1.0 + (n as f32 - df as f32 + 0.5) / (df as f32 + 0.5)).ln()
+    }
+
     /// Passage counts per package, for diagnostics.
     pub fn stats(&self) -> HashMap<String, u64> {
         self.packages.iter().map(|(id, m)| (id.clone(), m.reader.searcher().num_docs())).collect()
@@ -327,6 +342,7 @@ mod tests {
         assert!(lib.get("water", "nope").unwrap().is_none());
         assert!(lib.get("missing", "a1").is_err());
 
+        assert!(lib.idf("absentword") > lib.idf("water"), "rarer words weigh more");
         let doc = lib.document("water", "d1").unwrap();
         assert_eq!(doc.iter().map(|h| h.passage_id.as_str()).collect::<Vec<_>>(), vec!["a1", "a2"]);
     }

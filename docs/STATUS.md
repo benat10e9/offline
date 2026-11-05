@@ -30,6 +30,13 @@ Last updated: 2026-11-05 (session 3, part 2)
 - maps workflow now builds `maps/routing/` and reports build time and peak memory.
 - 50 Rust tests.
 
+**Session 3 (part 3) — first real-content results and fixes:**
+- ZIM extraction was broken (libzim renamed `_get_entry_by_id`); every page was silently skipped. Fixed, sources with 0 documents now fail loudly, a test builds and reads a real ZIM. Internet Archive fallback for blocked PDFs.
+- Medical/survival package: 13 sources, ~46,000 passages, 84 MB on disk, 41 MB compressed.
+- First eval on real content: 38/50 class correct, 24/41 expected sources, 3 out-of-scope questions wrongly verified. Causes: exact-word relevance (missed "apply" vs "applying") and every word weighted equally ("write a list" matched "Python list comprehension").
+- Fix: relevance now uses stems and rarity weights (IDF) — a passage must cover ≥55% of the question's distinctive weight; question-framing words ignored; 40 candidates retrieved instead of 20; MedlinePlus genetics and lab-test sections excluded (noise, and the source of a genetics page answering "severe bleeding").
+- Texas map package with routing: 1.6 GB on disk (1.0 GB compressed): tiles ~650 MB, routing ~950 MB (3.5 M junctions, 8.5 M edges; build 2 min 39 s, 4.5 GB peak RAM in CI); 27,657 places.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)
@@ -40,7 +47,8 @@ Last updated: 2026-11-05 (session 3, part 2)
 
 ## Next
 
-1. Read content, maps and Wikipedia workflow results (sizes, eval); calibrate eval expectations.
+1. Re-read the eval after the relevance fix; target ≥45/50 and zero out-of-scope verified before any model evaluation.
+1b. Routing data is large (~950 MB, ~1 GB RAM when loaded): compress geometry and memory-map before it ships on 32 GB drives.
 2. Check the Texas routing build's memory/time and route quality on real trips.
 3. Drive composer: edition manifest → which packages and models go on a 32/64/128 GB drive.
 4. Commerce: storefront + Stripe test mode, customizer, portal, asset registry.

@@ -292,7 +292,7 @@ pub struct AskOptions {
 
 impl Default for AskOptions {
     fn default() -> Self {
-        Self { retrieve: 20, max_passages: 8 }
+        Self { retrieve: 40, max_passages: 8 }
     }
 }
 
@@ -305,7 +305,7 @@ pub fn search_only(
     opts: &AskOptions,
 ) -> Result<Assessment, AgentError> {
     let hits = library.search(question, opts.retrieve)?;
-    let mut a = assess(question, ctx, &hits, sources);
+    let mut a = assess(question, ctx, &hits, sources, library);
     a.citable.truncate(opts.max_passages);
     Ok(a)
 }

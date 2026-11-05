@@ -21,8 +21,8 @@
       "publisher": "U.S. National Library of Medicine",
       "license": "LicenseRef-PublicDomain-USGov",
       "authority": "government",
-      "skip": "(^|/)(ency|druginfo)/|^[^/]+/[a-z]{2}(-[a-z]+)?/|(^|/)(es|spanish|espanol|languages|translations)(/|$)",
-      "rights_note": "NLM-authored pages are public domain. A.D.A.M. encyclopedia (/ency/), ASHP drug monographs and Natural Medicines (/druginfo/) are licensed to NLM by third parties and are excluded."
+      "skip": "(^|/)(ency|druginfo|genetics|lab-tests)/|^[^/]+/[a-z]{2}(-[a-z]+)?/|(^|/)(es|spanish|espanol|languages|translations)(/|$)",
+      "rights_note": "NLM-authored pages are public domain. A.D.A.M. encyclopedia (/ency/), ASHP drug monographs and Natural Medicines (/druginfo/) are licensed to NLM by third parties and are excluded. Genetics and lab-test sections are left out as out of scope."
     },
     {
       "id": "ready-gov",

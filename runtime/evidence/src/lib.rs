@@ -86,32 +86,219 @@ fn norm(s: &str) -> String {
 }
 
 const STOPWORDS: &[&str] = &[
-    "the", "and", "for", "with", "how", "what", "when", "where", "why", "who", "does", "can", "should", "my", "our",
-    "your", "you", "are", "was", "were", "this", "that", "from", "into", "about", "will", "would", "have", "has",
-    "had", "not", "but", "its", "it's", "his", "her", "they", "them", "there", "their", "then", "than", "out", "get",
-    "use", "using", "used", "need", "needs", "any", "all", "one", "which", "also", "after", "before", "while", "over",
-    "under", "make", "made", "do", "is", "it", "to", "of", "in", "on", "a", "an", "or", "be", "if", "at", "by", "as",
-    "i", "me", "we",
+    "the",
+    "and",
+    "for",
+    "with",
+    "how",
+    "what",
+    "when",
+    "where",
+    "why",
+    "who",
+    "does",
+    "can",
+    "should",
+    "my",
+    "our",
+    "your",
+    "you",
+    "are",
+    "was",
+    "were",
+    "this",
+    "that",
+    "from",
+    "into",
+    "about",
+    "will",
+    "would",
+    "have",
+    "has",
+    "had",
+    "not",
+    "but",
+    "its",
+    "it's",
+    "his",
+    "her",
+    "they",
+    "them",
+    "there",
+    "their",
+    "then",
+    "than",
+    "out",
+    "get",
+    "use",
+    "using",
+    "used",
+    "need",
+    "needs",
+    "any",
+    "all",
+    "one",
+    "which",
+    "also",
+    "after",
+    "before",
+    "while",
+    "over",
+    "under",
+    "make",
+    "made",
+    "do",
+    "is",
+    "it",
+    "to",
+    "of",
+    "in",
+    "on",
+    "a",
+    "an",
+    "or",
+    "be",
+    "if",
+    "at",
+    "by",
+    "as",
+    "i",
+    "me",
+    "we",
+    // question framing: how a question is asked, not what it is about
+    "often",
+    "much",
+    "many",
+    "long",
+    "best",
+    "way",
+    "ways",
+    "want",
+    "know",
+    "tell",
+    "please",
+    "could",
+    "really",
+    "got",
+    "take",
+    "still",
+    "ever",
+    "every",
+    "some",
+    "kind",
+    "type",
+    "thing",
+    "things",
+    "someone",
+    "something",
+    "correct",
+    "correctly",
+    "properly",
+    "right",
+    "good",
+    "basic",
+    "safely",
+    "exactly",
+    "possible",
+    "happen",
 ];
 
-fn content_terms(s: &str) -> HashSet<String> {
-    s.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() >= 3 && !STOPWORDS.contains(w))
-        .map(|w| w.trim_end_matches('s').to_string())
+/// Light suffix stripping so "applying", "applied" and "apply" compare equal.
+/// Applied until stable, so every form of a word lands on the same root.
+pub fn stem(w: &str) -> String {
+    let mut cur = w.to_string();
+    for _ in 0..3 {
+        let next = stem_once(&cur);
+        if next == cur {
+            break;
+        }
+        cur = next;
+    }
+    cur
+}
+
+fn stem_once(w: &str) -> String {
+    for (suf, rep) in [
+        ("ingly", ""),
+        ("ings", ""),
+        ("ing", ""),
+        ("edly", ""),
+        ("ied", "y"),
+        ("ies", "y"),
+        ("ment", ""),
+        ("ed", ""),
+        ("es", ""),
+        ("ly", ""),
+        ("s", ""),
+    ] {
+        if let Some(base) = w.strip_suffix(suf) {
+            if base.chars().count() >= 3 {
+                return format!("{base}{rep}");
+            }
+        }
+    }
+    w.to_string()
+}
+
+fn words(s: &str) -> impl Iterator<Item = String> + '_ {
+    s.split(|c: char| !c.is_alphanumeric()).map(|w| w.to_lowercase()).filter(|w| w.len() >= 3)
+}
+
+/// Question words that carry meaning: (raw lowercase word, stem).
+pub fn content_terms(s: &str) -> Vec<(String, String)> {
+    let mut seen = HashSet::new();
+    words(s)
+        .filter(|w| !STOPWORDS.contains(&w.as_str()))
+        .filter_map(|w| {
+            let st = stem(&w);
+            seen.insert(st.clone()).then_some((w, st))
+        })
         .collect()
 }
 
-/// Deterministic relevance floor: the passage must share at least two content
-/// terms with the question, or half of them when the question has fewer than four.
-pub fn is_relevant(question: &str, hit: &Hit) -> bool {
+/// How much a word distinguishes one passage from another (rarer = higher).
+pub trait TermWeights {
+    fn weight(&self, word: &str) -> f32;
+}
+
+/// Every word counts the same. For tests and callers without a library.
+pub struct Uniform;
+impl TermWeights for Uniform {
+    fn weight(&self, _word: &str) -> f32 {
+        1.0
+    }
+}
+
+impl TermWeights for kb_retrieval::Library {
+    fn weight(&self, word: &str) -> f32 {
+        self.idf(word)
+    }
+}
+
+/// Share of the question's weight a passage must cover to count as relevant.
+pub const RELEVANCE_COVERAGE: f32 = 0.55;
+
+/// Deterministic relevance: the passage must cover most of the question's
+/// *distinctive* words (weighted by rarity), compared by stem.
+pub fn relevance(question: &str, hit: &Hit, weights: &dyn TermWeights) -> f32 {
     let q = content_terms(question);
     if q.is_empty() {
-        return false;
+        return 0.0;
     }
-    let h = content_terms(&format!("{} {} {}", hit.title, hit.heading, hit.text));
-    let overlap = q.intersection(&h).count();
-    overlap >= 2 || (q.len() < 4 && overlap * 2 >= q.len())
+    let h: HashSet<String> = words(&format!("{} {} {}", hit.title, hit.heading, hit.text)).map(|w| stem(&w)).collect();
+    let (mut total, mut covered) = (0.0f32, 0.0f32);
+    for (w, st) in &q {
+        let wt = weights.weight(w).max(0.01);
+        total += wt;
+        if h.contains(st) {
+            covered += wt;
+        }
+    }
+    covered / total
+}
+
+pub fn is_relevant(question: &str, hit: &Hit, weights: &dyn TermWeights) -> bool {
+    relevance(question, hit, weights) >= RELEVANCE_COVERAGE
 }
 
 fn jurisdiction_matches(wanted: &str, doc: &[String]) -> Option<bool> {
@@ -125,7 +312,13 @@ fn jurisdiction_matches(wanted: &str, doc: &[String]) -> Option<bool> {
     }))
 }
 
-pub fn assess(question: &str, ctx: &QuestionContext, hits: &[Hit], sources: &dyn SourceLookup) -> Assessment {
+pub fn assess(
+    question: &str,
+    ctx: &QuestionContext,
+    hits: &[Hit],
+    sources: &dyn SourceLookup,
+    weights: &dyn TermWeights,
+) -> Assessment {
     let mut excluded = Vec::new();
     let mut notes = Vec::new();
 
@@ -137,7 +330,7 @@ pub fn assess(question: &str, ctx: &QuestionContext, hits: &[Hit], sources: &dyn
             excluded.push(Exclusion { citation_key: key, reason: ExclusionReason::UnknownSource });
             continue;
         };
-        if !is_relevant(question, h) {
+        if !is_relevant(question, h, weights) {
             excluded.push(Exclusion { citation_key: key, reason: ExclusionReason::NotRelevant });
             continue;
         }
@@ -261,7 +454,7 @@ mod tests {
     fn exact_manual_is_verified() {
         let l = lookup(vec![src("man", Authority::Official, &["acme:gx-2000"], &[], None)]);
         let ctx = QuestionContext { asset: Some("acme:gx-2000".into()), jurisdiction: None };
-        let a = assess(Q, &ctx, &[hit("p1", "man", T)], &l);
+        let a = assess(Q, &ctx, &[hit("p1", "man", T)], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Verified);
         assert_eq!(a.verified_keys, vec!["pkg/p1"]);
     }
@@ -270,7 +463,7 @@ mod tests {
     fn generic_material_for_specific_asset_is_partial_with_note() {
         let l = lookup(vec![src("gen", Authority::Government, &[], &[], None)]);
         let ctx = QuestionContext { asset: Some("cat:3208".into()), jurisdiction: None };
-        let a = assess(Q, &ctx, &[hit("p1", "gen", T)], &l);
+        let a = assess(Q, &ctx, &[hit("p1", "gen", T)], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Partial);
         assert!(a.notes[0].contains("cat:3208"));
     }
@@ -279,11 +472,11 @@ mod tests {
     fn other_equipment_manual_is_excluded() {
         let l = lookup(vec![src("man", Authority::Official, &["acme:gx-2000"], &[], None)]);
         let ctx = QuestionContext { asset: Some("acme:gx-3000".into()), jurisdiction: None };
-        let a = assess(Q, &ctx, &[hit("p1", "man", T)], &l);
+        let a = assess(Q, &ctx, &[hit("p1", "man", T)], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Unsupported);
         assert_eq!(a.excluded[0].reason, ExclusionReason::WrongEquipment);
         // And with no asset selected, an equipment-specific manual is not applied either.
-        let a = assess(Q, &QuestionContext::default(), &[hit("p1", "man", T)], &l);
+        let a = assess(Q, &QuestionContext::default(), &[hit("p1", "man", T)], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Unsupported);
     }
 
@@ -294,7 +487,7 @@ mod tests {
             src("revB", Authority::Official, &["acme:gx-2000"], &[], None),
         ]);
         let ctx = QuestionContext { asset: Some("acme:gx-2000".into()), jurisdiction: None };
-        let a = assess(Q, &ctx, &[hit("old", "revA", T), hit("new", "revB", T)], &l);
+        let a = assess(Q, &ctx, &[hit("old", "revA", T), hit("new", "revB", T)], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Verified);
         assert_eq!(a.citable.len(), 1);
         assert_eq!(a.citable[0].passage_id, "new");
@@ -305,7 +498,7 @@ mod tests {
     fn superseded_alone_caps_at_partial() {
         let l = lookup(vec![src("revA", Authority::Official, &["acme:gx-2000"], &[], Some("revB"))]);
         let ctx = QuestionContext { asset: Some("acme:gx-2000".into()), jurisdiction: None };
-        let a = assess(Q, &ctx, &[hit("old", "revA", T)], &l);
+        let a = assess(Q, &ctx, &[hit("old", "revA", T)], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Partial);
         assert!(a.notes.iter().any(|n| n.contains("superseded")));
     }
@@ -320,7 +513,7 @@ mod tests {
         let q = "What is the speed limit rule for school zones?";
         let t = "The speed limit rule for school zones is set by statute.";
         let ctx = QuestionContext { asset: None, jurisdiction: Some("US-TX".into()) };
-        let a = assess(q, &ctx, &[hit("1", "tx", t), hit("2", "ca", t), hit("3", "us", t)], &l);
+        let a = assess(q, &ctx, &[hit("1", "tx", t), hit("2", "ca", t), hit("3", "us", t)], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Verified);
         let keys: Vec<_> = a.citable.iter().map(|h| h.passage_id.as_str()).collect();
         assert_eq!(keys, vec!["1", "3"]);
@@ -330,10 +523,46 @@ mod tests {
     #[test]
     fn community_only_is_partial_and_irrelevant_is_unsupported() {
         let l = lookup(vec![src("se", Authority::Community, &[], &[], None)]);
-        let a = assess(Q, &QuestionContext::default(), &[hit("1", "se", T)], &l);
+        let a = assess(Q, &QuestionContext::default(), &[hit("1", "se", T)], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Partial);
-        let a = assess(Q, &QuestionContext::default(), &[hit("1", "se", "Bread rises when yeast ferments.")], &l);
+        let a =
+            assess(Q, &QuestionContext::default(), &[hit("1", "se", "Bread rises when yeast ferments.")], &l, &Uniform);
         assert_eq!(a.class, EvidenceClass::Unsupported);
+    }
+
+    #[test]
+    fn stemming_and_weighting() {
+        for (a, b) in [
+            ("applying", "apply"),
+            ("applied", "apply"),
+            ("burns", "burn"),
+            ("burning", "burn"),
+            ("supplies", "supply"),
+            ("treatment", "treat"),
+            ("bleeding", "bleed"),
+        ] {
+            assert_eq!(stem(a), stem(b), "{a} vs {b}");
+        }
+        assert_eq!(stem("gas"), "gas");
+        assert_ne!(stem("burn"), stem("bur"));
+        let h = hit("p", "s", "Applying a tourniquet above the wound stops arterial bleeding.");
+        assert!(is_relevant("How do I apply a tourniquet correctly?", &h, &Uniform));
+
+        struct Rare;
+        impl TermWeights for Rare {
+            fn weight(&self, w: &str) -> f32 {
+                if matches!(w, "python" | "comprehension") {
+                    8.0
+                } else {
+                    1.0
+                }
+            }
+        }
+        let h = hit("p", "s", "Write down a list of supplies and keep it with your plan.");
+        assert!(
+            !is_relevant("How do I write a list comprehension in Python?", &h, &Rare),
+            "filler overlap is not relevance"
+        );
     }
 
     #[test]

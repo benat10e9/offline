@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
 use tantivy::collector::TopDocs;
-use tantivy::query::{QueryParser, TermQuery};
-use tantivy::schema::{Field, IndexRecordOption, Schema, Value, STORED, STRING, TEXT};
+use tantivy::query::{BooleanQuery, BoostQuery, Occur, Query, TermQuery};
+use tantivy::schema::{Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING};
 use tantivy::{doc, Index, IndexReader, ReloadPolicy, TantivyDocument, Term};
 use thiserror::Error;
 
@@ -21,8 +21,6 @@ pub const PASSAGES_FILE: &str = "passages.jsonl";
 pub enum RetrievalError {
     #[error("tantivy: {0}")]
     Tantivy(#[from] tantivy::TantivyError),
-    #[error("query: {0}")]
-    Query(#[from] tantivy::query::QueryParserError),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     #[error("passage line {line}: {source}")]
@@ -59,15 +57,25 @@ struct Fields {
     text: Field,
 }
 
+/// Full-text fields store term frequencies but no positions: we never run phrase
+/// queries, and positions were a large share of a Wikipedia-sized index.
+fn text_no_positions() -> TextOptions {
+    TextOptions::default()
+        .set_indexing_options(
+            TextFieldIndexing::default().set_tokenizer("default").set_index_option(IndexRecordOption::WithFreqs),
+        )
+        .set_stored()
+}
+
 fn schema() -> (Schema, Fields) {
     let mut b = Schema::builder();
     let f = Fields {
         passage_id: b.add_text_field("passage_id", STRING | STORED),
         doc_id: b.add_text_field("doc_id", STRING | STORED),
         source_id: b.add_text_field("source_id", STRING | STORED),
-        title: b.add_text_field("title", TEXT | STORED),
-        heading: b.add_text_field("heading", TEXT | STORED),
-        text: b.add_text_field("text", TEXT | STORED),
+        title: b.add_text_field("title", text_no_positions()),
+        heading: b.add_text_field("heading", text_no_positions()),
+        text: b.add_text_field("text", text_no_positions()),
     };
     (b.build(), f)
 }
@@ -242,12 +250,25 @@ impl Library {
     /// with a reranker once packages differ greatly in size.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Hit>, RetrievalError> {
         let mut all = Vec::new();
+        let words: Vec<String> = sanitize_query(query).split_whitespace().map(|w| w.to_lowercase()).collect();
         for (pkg, m) in &self.packages {
-            // Passage text already contains its headings; scoring the heading field and a
-            // heavily boosted title as well let one common title word outweigh rare body words.
-            let mut qp = QueryParser::for_index(&m.index, vec![m.fields.title, m.fields.text]);
-            qp.set_field_boost(m.fields.title, 1.2);
-            let (q, _errors) = qp.parse_query_lenient(&sanitize_query(query));
+            // Terms OR'd over passage text plus a lightly boosted title. Passage text already
+            // contains its headings, so the heading field is not scored separately.
+            let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+            let mut tok = m.index.tokenizer_for_field(m.fields.text)?;
+            for w in &words {
+                let mut stream = tok.token_stream(w);
+                while let Some(t) = stream.next() {
+                    for (field, boost) in [(m.fields.text, 1.0f32), (m.fields.title, 1.2)] {
+                        let tq = TermQuery::new(Term::from_field_text(field, &t.text), IndexRecordOption::WithFreqs);
+                        clauses.push((Occur::Should, Box::new(BoostQuery::new(Box::new(tq), boost))));
+                    }
+                }
+            }
+            if clauses.is_empty() {
+                continue;
+            }
+            let q = BooleanQuery::new(clauses);
             let searcher = m.reader.searcher();
             let top = searcher.search(&q, &TopDocs::with_limit(limit).order_by_score())?;
             for (score, addr) in top {

@@ -44,6 +44,12 @@ Last updated: 2026-11-05 (session 3, part 2)
 - `kb build` streams passages into the index (Wikipedia scale); failed content builds publish `<catalog>-failure.txt` to the release.
 - `cargo run -p kb-cli --example relevance_probe -- <pkg> "<question>"` shows scores and term weights.
 
+**Session 3 (part 5):**
+- First real model run exposed: llama-server launched with relative paths from its own folder (never would have started on a drive) — fixed, with a test; `kb eval --with-model` had graded search fallback as model answers — now fails loudly; a hard-link experiment corrupted a fixture via a test — replaced with no linking.
+- `model-eval` workflow: Qwen3 4B and 8B through the full pipeline on a CPU runner (correctness real, speeds not representative).
+- Wikipedia top 50,000 articles built: 1.73 M passages, 7.0 GB on disk / 5.1 GB compressed with the old format.
+- Package format: index stores term frequencies without positions; passages.jsonl no longer shipped (text is stored in the index). Medical package 84 MB → 31 MB with identical eval (50/50, 40/41). Projected Wikipedia ~2.6 GB.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)

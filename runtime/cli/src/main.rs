@@ -38,9 +38,6 @@ enum Cmd {
         /// Secret key file from `kb keygen`.
         #[arg(long)]
         key: PathBuf,
-        /// Move passages.jsonl into the package instead of copying (saves disk in CI).
-        #[arg(long)]
-        move_passages: bool,
     },
     /// Verify a package against trusted public keys.
     Verify {
@@ -222,7 +219,7 @@ fn main() -> Result<()> {
             std::fs::write(&pubf, k.public_hex() + "\n")?;
             println!("secret: {}\npublic: {}", key.display(), pubf.display());
         }
-        Cmd::Build { src, out, key, move_passages } => {
+        Cmd::Build { src, out, key } => {
             let meta: PackageMeta =
                 serde_json::from_slice(&std::fs::read(src.join("package.json"))?).context("package.json")?;
             let sources: Vec<SourceRecord> =
@@ -248,15 +245,8 @@ fn main() -> Result<()> {
                         Err(format!("passage {} references unknown source {}", p.passage_id, p.source_id))
                     }
                 })?;
-                // --move-passages: CI throws the source folder away, and Wikipedia-sized
-                // passage files would otherwise double disk use. Never hard-link: edits to
-                // one copy would silently change the other.
-                if move_passages {
-                    std::fs::rename(src.join(PASSAGES_FILE), out.join(PASSAGES_FILE))
-                        .or_else(|_| copy_file(&src.join(PASSAGES_FILE), &out.join(PASSAGES_FILE)).map(|_| ()))?;
-                } else {
-                    copy_file(&src.join(PASSAGES_FILE), &out.join(PASSAGES_FILE))?;
-                }
+                // The text lives in the index's stored fields; passages.jsonl stays in the
+                // build folder and is not shipped (it doubled package size).
                 n
             } else {
                 0

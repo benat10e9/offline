@@ -6,8 +6,8 @@ A package is a directory:
 <package>/
   manifest.json      signed metadata (below)
   manifest.sig       "ed25519 <public-key-hex> <signature-hex>"
-  passages.jsonl     one Passage per line (source text, for the reader view)
-  index/             Tantivy index over the passages (read-only at runtime)
+  index/             Tantivy index over the passages, text stored (read-only at runtime;
+                     terms with frequencies, no positions)
   ...                future: tiles/, routing/, gazetteer/, vectors/
 ```
 
@@ -26,6 +26,9 @@ A package is a directory:
 `SourceRecord`: `id`, `title`, `publisher`, `license` (SPDX or `LicenseRef-*`), `authority`
 (`official` · `government` · `reference` · `community`), `revision`, `superseded_by` (source id),
 `applies_to` (exact equipment as `make:model`, lowercase), `jurisdictions` (e.g. `US`, `US-TX`), `url`.
+
+`passages.jsonl` is the factory's input to `kb build` and is not shipped: the reader view reads
+stored text from the index.
 
 ## Passage
 

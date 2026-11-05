@@ -69,7 +69,7 @@ jobs:
           printf '%s\n' "$KB_DEV_SIGNING_KEY" > dev.key
           mkdir -p pkgs
           set -o pipefail
-          target/release/kb build --src "src/$CAT" --out "pkgs/$CAT" --key dev.key --move-passages 2>&1 | tee build.log
+          target/release/kb build --src "src/$CAT" --out "pkgs/$CAT" --key dev.key 2>&1 | tee build.log
           rm -f dev.key
           target/release/kb verify --full --pkg pkgs/$CAT --trust trust/dev-publisher.pub
       - name: Measure

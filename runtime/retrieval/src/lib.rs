@@ -246,6 +246,7 @@ impl Library {
     }
 
     /// BM25 search across every mounted package over passage text, with a light title boost.
+    /// Returns up to `limit` hits per package, merged by score.
     /// Scores from different packages are merged directly; good enough for v0, revisit
     /// with a reranker once packages differ greatly in size.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Hit>, RetrievalError> {
@@ -276,8 +277,9 @@ impl Library {
                 all.push(to_hit(pkg, &m.fields, &d, score));
             }
         }
+        // Up to `limit` hits from *each* package: a very large package (Wikipedia) must not
+        // crowd a small authoritative one (a field manual) out of the candidate set.
         all.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        all.truncate(limit);
         Ok(all)
     }
 

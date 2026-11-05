@@ -384,6 +384,12 @@ pub fn assess(
         kept.push((h, s));
     }
 
+    // Most authoritative first (official, government, reference, community), then score:
+    // reference works fill gaps but never displace an applicable official source.
+    kept.sort_by(|(ha, sa), (hb, sb)| {
+        sa.authority.cmp(&sb.authority).then(hb.score.partial_cmp(&ha.score).unwrap_or(std::cmp::Ordering::Equal))
+    });
+
     // Pass 3: which kept hits meet the verified bar?
     let verified_keys: Vec<String> = kept
         .iter()
@@ -579,6 +585,21 @@ mod tests {
             !is_relevant("How do I write a list comprehension in Python?", &h, &Rare),
             "filler overlap is not relevance"
         );
+    }
+
+    #[test]
+    fn authoritative_sources_come_first() {
+        let l = lookup(vec![
+            src("wiki", Authority::Reference, &[], &[], None),
+            src("cdc", Authority::Government, &[], &[], None),
+        ]);
+        let mut wiki = hit("w", "wiki", T);
+        wiki.score = 50.0;
+        let mut cdc = hit("c", "cdc", T);
+        cdc.score = 5.0;
+        let a = assess(Q, &QuestionContext::default(), &[wiki, cdc], &l, &Uniform);
+        assert_eq!(a.citable[0].passage_id, "c", "government guidance outranks a higher-scoring encyclopedia passage");
+        assert_eq!(a.class, EvidenceClass::Verified);
     }
 
     #[test]

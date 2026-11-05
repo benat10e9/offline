@@ -5,12 +5,19 @@ name: content
 # to the content-dev release.
 on:
   workflow_dispatch:
+    inputs:
+      catalog:
+        description: "Catalog name in catalog/sources/ (without .json)"
+        default: medical-survival
   push:
     branches: [main]
-    paths: ["catalog/sources/**", "factory/**", ".github/workflows/content.yml"]
+    paths: ["catalog/sources/**", "factory/build_package.py", "evals/**", ".github/workflows/content.yml"]
 
 permissions:
   contents: write
+
+env:
+  CAT: ${{ inputs.catalog || 'medical-survival' }}
 
 jobs:
   model-urls:
@@ -44,7 +51,7 @@ jobs:
       - name: Build kb
         run: cargo build --release -p kb-cli
       - name: Acquire and convert sources
-        run: python3 factory/build_package.py catalog/sources/medical-survival.json --work work --out src/medical-survival
+        run: python3 factory/build_package.py "catalog/sources/$CAT.json" --work work --out "src/$CAT"
       - name: Index, sign, verify
         env:
           KB_DEV_SIGNING_KEY: ${{ secrets.KB_DEV_SIGNING_KEY }}
@@ -52,38 +59,56 @@ jobs:
           umask 077
           printf '%s\n' "$KB_DEV_SIGNING_KEY" > dev.key
           mkdir -p pkgs
-          target/release/kb build --src src/medical-survival --out pkgs/medical-survival --key dev.key
+          target/release/kb build --src src/$CAT --out pkgs/$CAT --key dev.key
           rm -f dev.key
-          target/release/kb verify --full --pkg pkgs/medical-survival --trust trust/dev-publisher.pub
+          target/release/kb verify --full --pkg pkgs/$CAT --trust trust/dev-publisher.pub
       - name: Measure
         run: |
           {
             echo "### Package size"
             echo '```'
-            du -sh pkgs/medical-survival pkgs/medical-survival/index pkgs/medical-survival/passages.jsonl
+            du -sh pkgs/$CAT pkgs/$CAT/index pkgs/$CAT/passages.jsonl
             echo '```'
             echo "### Sources"
             echo '```'
-            python3 -c "import json;r=json.load(open('src/medical-survival/report.json'));[print(f'{k:<20} {v[\"documents\"]:>6} docs {v[\"passages\"]:>7} passages {v[\"chars\"]/1e6:>7.1f} M chars') for k,v in r['sources'].items()];print('FAILED:', r['failed'])"
+            python3 -c "import json;r=json.load(open('src/'+__import__('os').environ['CAT']+'/report.json'));[print(f'{k:<20} {v[\"documents\"]:>6} docs {v[\"passages\"]:>7} passages {v[\"chars\"]/1e6:>7.1f} M chars') for k,v in r['sources'].items()];print('FAILED:', r['failed'])"
             echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          } | tee sizes-content.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Smoke test search
         run: |
           mkdir -p drive/packages drive/trust
-          cp -R pkgs/medical-survival drive/packages/
+          cp -R pkgs/$CAT drive/packages/
           cp trust/dev-publisher.pub drive/trust/
           for q in "How do I stop severe bleeding?" "How long should I boil water to make it safe?" "What are signs of heat stroke?"; do
-            target/release/kb search --pkg pkgs/medical-survival --trust trust/dev-publisher.pub "$q" \
+            target/release/kb search --pkg pkgs/$CAT --trust trust/dev-publisher.pub "$q" \
               | python3 -c "import sys,json;a=json.load(sys.stdin);print(a['class'], '|', '; '.join(h['title'] for h in a['citable'][:3]))" \
-              | sed "s|^|$q -> |" | tee -a "$GITHUB_STEP_SUMMARY"
+              | sed "s|^|$q -> |" | tee -a smoke.txt | tee -a "$GITHUB_STEP_SUMMARY"
           done
+      - name: Retrieval evaluation (report only)
+        if: env.CAT == 'medical-survival'
+        run: |
+          target/release/kb eval --root drive --questions evals/medical-survival.jsonl --out eval-report.json | tee eval.txt
+          tail -1 eval.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Publish to content-dev release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tar czf packages.tar.gz -C pkgs .
-          ls -l packages.tar.gz | tee -a "$GITHUB_STEP_SUMMARY"
+          tar czf "$CAT.tar.gz" -C pkgs .
+          ls -l "$CAT.tar.gz" | tee -a "$GITHUB_STEP_SUMMARY"
           gh release view content-dev >/dev/null 2>&1 || \
             gh release create content-dev --prerelease --title "Content (development builds)" \
               --notes "Signed with the development key. Not for distribution."
-          gh release upload content-dev packages.tar.gz trust/dev-publisher.pub src/medical-survival/report.json --clobber
+          ls -l "$CAT.tar.gz" >> sizes-content.txt
+          for f in sizes-content.txt smoke.txt eval.txt eval-report.json; do [ -f "$f" ] && mv "$f" "$CAT-$f"; done
+          cp "src/$CAT/report.json" "$CAT-report.json"
+          # Release assets max out at 2 GB: split larger packages; provisioning reassembles them.
+          size=$(stat -c %s "$CAT.tar.gz")
+          if [ "$size" -gt 1900000000 ]; then
+            split -b 1900m -d "$CAT.tar.gz" "$CAT.tar.gz.part-"
+            ls "$CAT".tar.gz.part-* | xargs -n1 basename > "$CAT.parts.txt"
+            gh release upload content-dev "$CAT".tar.gz.part-* "$CAT.parts.txt" --clobber
+          else
+            echo "$CAT.tar.gz" > "$CAT.parts.txt"
+            gh release upload content-dev "$CAT.tar.gz" "$CAT.parts.txt" --clobber
+          fi
+          gh release upload content-dev trust/dev-publisher.pub "$CAT"-*.txt "$CAT"-*.json --clobber

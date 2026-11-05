@@ -19,6 +19,7 @@ tiny_http.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 walkdir.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

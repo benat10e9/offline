@@ -93,6 +93,23 @@ enum Cmd {
         #[arg(long, default_value = "bench-report.json")]
         out: PathBuf,
     },
+    /// Grade the installed library (and optionally the model) against a question set.
+    Eval {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        questions: PathBuf,
+        /// Also generate and grade answers (needs a model on the drive).
+        #[arg(long)]
+        with_model: bool,
+        #[arg(long)]
+        allow_unevaluated: bool,
+        #[arg(long, default_value = "eval-report.json")]
+        out: PathBuf,
+        /// Exit non-zero if any out-of-scope question is marked verified or any safety pattern matches.
+        #[arg(long)]
+        strict: bool,
+    },
     /// Print this machine's model tier from a models.json catalog.
     Tier {
         #[arg(long)]
@@ -157,6 +174,20 @@ fn copy_file(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let dest = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &dest)?;
+        } else {
+            copy_file(&entry.path(), &dest)?;
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
@@ -176,7 +207,8 @@ fn main() -> Result<()> {
                 serde_json::from_slice(&std::fs::read(src.join("package.json"))?).context("package.json")?;
             let sources: Vec<SourceRecord> =
                 serde_json::from_slice(&std::fs::read(src.join("sources.json"))?).context("sources.json")?;
-            let passages = read_passages(&src.join(PASSAGES_FILE))?;
+            let has_passages = src.join(PASSAGES_FILE).is_file();
+            let passages = if has_passages { read_passages(&src.join(PASSAGES_FILE))? } else { Vec::new() };
             let known: std::collections::HashSet<&str> = sources.iter().map(|s| s.id.as_str()).collect();
             for p in &passages {
                 if !known.contains(p.source_id.as_str()) {
@@ -194,8 +226,24 @@ fn main() -> Result<()> {
                 std::fs::remove_dir_all(&out)?;
             }
             std::fs::create_dir_all(&out)?;
-            let n = build_index(&out, &passages)?;
-            copy_file(&src.join(PASSAGES_FILE), &out.join(PASSAGES_FILE))?;
+            let n = if has_passages {
+                let n = build_index(&out, &passages)?;
+                copy_file(&src.join(PASSAGES_FILE), &out.join(PASSAGES_FILE))?;
+                n
+            } else {
+                0
+            };
+            // Asset folders (maps/, etc.) are copied as-is and covered by the signed manifest.
+            for entry in std::fs::read_dir(&src)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                if entry.file_type()?.is_dir() && name != "index" {
+                    copy_dir(&entry.path(), &out.join(&name))?;
+                }
+            }
+            if !has_passages && !out.join("maps").is_dir() {
+                bail!("{} has neither passages.jsonl nor a maps/ folder", src.display());
+            }
             let k = KeyPair::from_secret_hex(&std::fs::read_to_string(&key)?)?;
             let manifest = build_manifest(
                 &out,
@@ -314,6 +362,41 @@ fn main() -> Result<()> {
                 }
             }
             println!("\nfull report: {}", out.display());
+        }
+        Cmd::Eval { root, questions, with_model, allow_unevaluated, out, strict } => {
+            let engine = kb_server::Engine::open(kb_server::Root::new(&root))?;
+            if with_model {
+                engine.start_model(&kb_server::EngineOptions { allow_unevaluated, ..Default::default() });
+                eprintln!("assistant: {:?}", engine.model_status());
+            }
+            let items = kb_server::eval::load_items(&questions)?;
+            let r = kb_server::eval::run(&engine, &items, with_model)?;
+            std::fs::write(&out, serde_json::to_vec_pretty(&r)?)?;
+            for x in &r.results {
+                let src = match x.source_hit {
+                    Some(true) => "src ok ",
+                    Some(false) => "SRC MISS",
+                    None => "        ",
+                };
+                println!(
+                    "{} {} {:<11} {:<14} {}{}",
+                    if x.class_ok { "ok  " } else { "FAIL" },
+                    src,
+                    format!("{:?}", x.class).to_lowercase(),
+                    x.id,
+                    x.top_sources.iter().take(3).cloned().collect::<Vec<_>>().join(","),
+                    if x.violations.is_empty() { String::new() } else { format!("  UNSAFE: {:?}", x.violations) }
+                );
+            }
+            let s = &r.summary;
+            println!(
+                "\nclass ok {}/{}  sources {}/{}  out-of-scope wrongly verified {}  withheld {}/{}  unsafe {}  mean {:.2}s",
+                s.class_ok, s.items, s.source_hits, s.source_expectations, s.out_of_scope_wrongly_verified,
+                s.answers_withheld, s.model_graded, s.safety_violations, s.mean_seconds
+            );
+            if strict && (s.out_of_scope_wrongly_verified > 0 || s.safety_violations > 0) {
+                std::process::exit(3);
+            }
         }
         Cmd::Tier { catalog } => {
             let c = kb_inference::ModelCatalog::load(&catalog)?;

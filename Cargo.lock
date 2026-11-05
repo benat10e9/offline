@@ -937,6 +937,7 @@ dependencies = [
  "kb-inference",
  "kb-packages",
  "kb-retrieval",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

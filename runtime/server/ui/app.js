@@ -63,6 +63,7 @@ async function refreshStatus() {
     const r = await fetch("/api/status");
     const s = await r.json();
     const passages = s.packages.reduce((a, p) => a + p.passages, 0);
+    $("tab-map").hidden = !s.maps;
     const lib = $("lib-status");
     lib.textContent = s.packages.length
       ? `Library: ${s.packages.length} package${s.packages.length > 1 ? "s" : ""}, ${passages.toLocaleString()} passages`
@@ -215,7 +216,99 @@ function closeReader() {
   document.querySelector(".shell").classList.remove("reading");
 }
 
+// ---------- map ----------
+let mapState = null;
+
+function loadScript(src) {
+  return new Promise((ok, fail) => {
+    const s = el("script", { src });
+    s.addEventListener("load", ok);
+    s.addEventListener("error", () => fail(new Error(`Could not load ${src}`)));
+    document.head.append(s);
+  });
+}
+
+async function showView(view) {
+  const map = view === "map";
+  $("mapview").hidden = !map;
+  $("askview").hidden = map;
+  $("tab-ask").setAttribute("aria-pressed", String(!map));
+  $("tab-map").setAttribute("aria-pressed", String(map));
+  if (map) {
+    if (!mapState) await initMap();
+    else mapState.map.resize();
+    $("place-q").focus();
+  }
+}
+
+async function initMap() {
+  mapState = { map: null, marker: null };
+  const maps = await (await fetch("/api/maps")).json();
+  if (!maps.length) {
+    $("map-note").textContent = "No map is installed on this drive. Map packages add offline maps and place search.";
+    return;
+  }
+  const m = maps[0];
+  document.head.append(el("link", { rel: "stylesheet", href: "/vendor/maplibre-gl.css" }));
+  await loadScript("/vendor/maplibre-gl-csp.js");
+  await loadScript("/vendor/pmtiles.js");
+  await loadScript("/vendor/basemaps.js");
+  /* global maplibregl, pmtiles, basemaps */
+  maplibregl.setWorkerUrl("/vendor/maplibre-gl-csp-worker.js");
+  maplibregl.addProtocol("pmtiles", new pmtiles.Protocol().tile);
+  const base = `${location.origin}/maps/${encodeURIComponent(m.package_id)}`;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const flavor = dark ? "dark" : "light";
+  const [w, s, e, n] = m.meta.bounds;
+  const map = new maplibregl.Map({
+    container: "map",
+    style: {
+      version: 8,
+      glyphs: `${base}/assets/fonts/{fontstack}/{range}.pbf`,
+      sprite: `${base}/assets/sprites/v4/${flavor}`,
+      sources: {
+        protomaps: { type: "vector", url: `pmtiles://${base}/${m.meta.tiles}`, attribution: m.meta.attribution },
+      },
+      layers: basemaps.layers("protomaps", basemaps.namedFlavor(flavor), { lang: "en" }),
+    },
+    bounds: [[w, s], [e, n]],
+    maxBounds: [[w - 2, s - 2], [e + 2, n + 2]],
+    maxZoom: (m.meta.maxzoom || 14) + 2,
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
+  map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-left");
+  mapState.map = map;
+  $("map-note").textContent = `${m.meta.title || m.meta.region}: ${Number(m.meta.places || 0).toLocaleString()} places searchable offline.`;
+}
+
+let placeTimer = null;
+function searchPlaces() {
+  clearTimeout(placeTimer);
+  placeTimer = setTimeout(async () => {
+    const q = $("place-q").value.trim();
+    const list = $("place-results");
+    if (!q) { list.replaceChildren(); return; }
+    const places = await (await fetch(`/api/places?q=${encodeURIComponent(q)}&limit=12`)).json();
+    list.replaceChildren(...places.map((p) => el("li", {},
+      el("button", { type: "button", on: { click: () => goToPlace(p) } },
+        el("span", {}, p.name),
+        el("span", { class: "pk" }, [p.kind, p.context].filter(Boolean).join(", "))))));
+    if (!places.length) list.append(el("li", { class: "hint" }, "No matching places in the offline map."));
+  }, 150);
+}
+
+function goToPlace(p) {
+  if (!mapState || !mapState.map) return;
+  const zoom = ["city", "town"].includes(p.kind) ? 11 : p.kind === "village" || p.kind === "hamlet" ? 13 : 15;
+  mapState.map.flyTo({ center: [p.lon, p.lat], zoom, essential: true });
+  if (mapState.marker) mapState.marker.remove();
+  mapState.marker = new maplibregl.Marker({ color: "#2a7a4b" }).setLngLat([p.lon, p.lat]).addTo(mapState.map);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  $("tab-ask").addEventListener("click", () => showView("ask"));
+  $("tab-map").addEventListener("click", () => showView("map").catch((e) => { $("map-note").textContent = String(e.message || e); }));
+  $("place-q").addEventListener("input", searchPlaces);
   setupContext();
   refreshStatus();
   $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); submit("ask"); });

@@ -116,7 +116,31 @@ pub struct Engine {
     pub sources: HashMap<(String, String), SourceRecord>,
     pub packages: Vec<PackageInfo>,
     pub problems: Vec<PackageProblem>,
+    pub maps: Vec<MapInfo>,
+    pub places: Vec<Place>,
     model: Mutex<ModelSlot>,
+}
+
+/// A map in a package: `maps/map.json` plus the files beside it.
+#[derive(Debug, Clone, Serialize)]
+pub struct MapInfo {
+    pub package_id: String,
+    #[serde(skip)]
+    pub dir: PathBuf,
+    pub meta: serde_json::Value,
+}
+
+/// A searchable place from a map package's gazetteer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Place {
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub rank: u32,
+    pub lat: f64,
+    pub lon: f64,
+    #[serde(default)]
+    pub context: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -153,12 +177,25 @@ impl Engine {
             .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
             .unwrap_or_default();
         dirs.sort();
+        let mut maps = Vec::new();
+        let mut places = Vec::new();
         for dir in dirs {
-            let result = verify_package(&dir, &keys, VerifyMode::SignatureOnly)
-                .map_err(anyhow::Error::from)
-                .and_then(|m| library.mount(&m.id, &dir).map(|_| m).map_err(anyhow::Error::from));
+            let result =
+                verify_package(&dir, &keys, VerifyMode::SignatureOnly).map_err(anyhow::Error::from).and_then(|m| {
+                    if dir.join(kb_retrieval::INDEX_DIR).is_dir() {
+                        library.mount(&m.id, &dir)?;
+                    }
+                    Ok(m)
+                });
             match result {
                 Ok(m) => {
+                    let map_json = dir.join("maps").join("map.json");
+                    if let Ok(bytes) = std::fs::read(&map_json) {
+                        if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                            maps.push(MapInfo { package_id: m.id.clone(), dir: dir.join("maps"), meta });
+                            places.extend(load_places(&dir.join("maps").join("gazetteer.jsonl")));
+                        }
+                    }
                     for s in &m.sources {
                         sources.insert((m.id.clone(), s.id.clone()), s.clone());
                     }
@@ -177,6 +214,8 @@ impl Engine {
             sources,
             packages,
             problems,
+            maps,
+            places,
             model: Mutex::new(ModelSlot::Status(ModelStatus::SearchOnly { reason: "Model not started".into() })),
         })
     }
@@ -288,6 +327,48 @@ impl Engine {
             Some((answer, unevaluated)) => Ok(AskResponse::Answer { answer: answer?, unevaluated_model: unevaluated }),
             None => Ok(AskResponse::SearchOnly { assessment: self.search(req)?, status: self.model_status() }),
         }
+    }
+}
+
+fn load_places(path: &std::path::Path) -> Vec<Place> {
+    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
+}
+
+fn fold(s: &str) -> String {
+    s.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect()
+}
+
+impl Engine {
+    /// Rank places by how well the name matches, then by kind (cities, hospitals first).
+    pub fn search_places(&self, query: &str, limit: usize) -> Vec<Place> {
+        let q = fold(query);
+        let q = q.split_whitespace().collect::<Vec<_>>().join(" ");
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let tokens: Vec<&str> = q.split(' ').collect();
+        let mut scored: Vec<(u32, &Place)> = self
+            .places
+            .iter()
+            .filter_map(|p| {
+                let name = fold(&p.name);
+                let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+                let hay = format!("{name} {} {}", fold(&p.kind), fold(&p.context));
+                let base = if name == q {
+                    100
+                } else if name.starts_with(&q) {
+                    60
+                } else if tokens.iter().all(|t| hay.split_whitespace().any(|w| w.starts_with(t))) {
+                    30
+                } else {
+                    return None;
+                };
+                Some((base + p.rank, p))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.len().cmp(&b.1.name.len())));
+        scored.into_iter().take(limit).map(|(_, p)| p.clone()).collect()
     }
 }
 
@@ -436,6 +517,17 @@ pub fn bench(root: &Root, only: Option<&str>, allow_unevaluated: bool) -> anyhow
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/app.js");
 const APP_CSS: &str = include_str!("../ui/app.css");
+const VENDOR: &[(&str, &str, &[u8])] = &[
+    ("maplibre-gl-csp.js", "text/javascript; charset=utf-8", include_bytes!("../ui/vendor/maplibre-gl-csp.js")),
+    (
+        "maplibre-gl-csp-worker.js",
+        "text/javascript; charset=utf-8",
+        include_bytes!("../ui/vendor/maplibre-gl-csp-worker.js"),
+    ),
+    ("maplibre-gl.css", "text/css; charset=utf-8", include_bytes!("../ui/vendor/maplibre-gl.css")),
+    ("pmtiles.js", "text/javascript; charset=utf-8", include_bytes!("../ui/vendor/pmtiles.js")),
+    ("basemaps.js", "text/javascript; charset=utf-8", include_bytes!("../ui/vendor/basemaps.js")),
+];
 
 pub struct Running {
     pub port: u16,
@@ -475,7 +567,8 @@ fn respond(req: tiny_http::Request, code: u16, ctype: &str, body: Vec<u8>) {
         .with_header(header("X-Content-Type-Options", "nosniff"))
         .with_header(header(
             "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'",
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; \
+             connect-src 'self'; worker-src 'self' blob:; child-src 'self' blob:",
         ));
     let _ = req.respond(resp);
 }
@@ -519,6 +612,69 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+fn content_type(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("") {
+        "json" => "application/json",
+        "png" => "image/png",
+        "pbf" => "application/x-protobuf",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Serve a file under `base` honouring a single `Range: bytes=a-b` header (PMTiles reads by range).
+fn serve_file(req: tiny_http::Request, base: &std::path::Path, rel: &str) {
+    use std::io::{Seek, SeekFrom};
+    let rel = percent_decode(rel);
+    let ok = !rel.is_empty()
+        && rel.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+        && !rel.contains('\\')
+        && !rel.contains(':');
+    if !ok {
+        return error(req, 400, "Bad path");
+    }
+    let path = base.join(&rel);
+    let Ok(mut f) = std::fs::File::open(&path) else { return error(req, 404, "Not found") };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let range = req
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Range"))
+        .and_then(|h| h.value.as_str().strip_prefix("bytes=").map(|s| s.to_string()));
+    let ctype = content_type(&rel);
+    let common = vec![
+        header("Content-Type", ctype),
+        header("Accept-Ranges", "bytes"),
+        header("Cache-Control", "max-age=3600"),
+        header("X-Content-Type-Options", "nosniff"),
+    ];
+    if let Some(r) = range {
+        let (a, b) = r.split_once('-').unwrap_or(("", ""));
+        let (start, end) = match (a.parse::<u64>(), b.parse::<u64>()) {
+            (Ok(s), Ok(e)) => (s, e.min(len.saturating_sub(1))),
+            (Ok(s), Err(_)) => (s, len.saturating_sub(1)),
+            (Err(_), Ok(n)) => (len.saturating_sub(n), len.saturating_sub(1)),
+            _ => return error(req, 416, "Bad range"),
+        };
+        if start >= len || start > end {
+            let resp = tiny_http::Response::empty(416).with_header(header("Content-Range", &format!("bytes */{len}")));
+            let _ = req.respond(resp);
+            return;
+        }
+        if f.seek(SeekFrom::Start(start)).is_err() {
+            return error(req, 500, "Seek failed");
+        }
+        let n = end - start + 1;
+        let mut headers = common;
+        headers.push(header("Content-Range", &format!("bytes {start}-{end}/{len}")));
+        let resp = tiny_http::Response::new(tiny_http::StatusCode(206), headers, f.take(n), Some(n as usize), None);
+        let _ = req.respond(resp);
+    } else {
+        let resp = tiny_http::Response::new(tiny_http::StatusCode(200), common, f, Some(len as usize), None);
+        let _ = req.respond(resp);
+    }
+}
+
 fn read_body(req: &mut tiny_http::Request) -> Option<QuestionRequest> {
     let mut s = String::new();
     req.as_reader().take(64 * 1024).read_to_string(&mut s).ok()?;
@@ -554,12 +710,35 @@ fn handle(engine: &Engine, mut req: tiny_http::Request) {
         (tiny_http::Method::Get, "/app.css") => {
             respond(req, 200, "text/css; charset=utf-8", APP_CSS.as_bytes().to_vec())
         }
+        (tiny_http::Method::Get, p) if p.starts_with("/vendor/") => {
+            let name = &p["/vendor/".len()..];
+            match VENDOR.iter().find(|(n, _, _)| *n == name) {
+                Some((_, ctype, bytes)) => respond(req, 200, ctype, bytes.to_vec()),
+                None => error(req, 404, "Not found"),
+            }
+        }
+        (tiny_http::Method::Get, p) if p.starts_with("/maps/") => {
+            let rest = &p["/maps/".len()..];
+            let (pkg, rel) = rest.split_once('/').unwrap_or((rest, ""));
+            match engine.maps.iter().find(|m| m.package_id == pkg) {
+                Some(m) => serve_file(req, &m.dir, rel),
+                None => error(req, 404, "No such map"),
+            }
+        }
+        (tiny_http::Method::Get, "/api/maps") => json(req, 200, &engine.maps),
+        (tiny_http::Method::Get, "/api/places") => {
+            let q = query_param(&url, "q").unwrap_or_default();
+            let limit = query_param(&url, "limit").and_then(|l| l.parse().ok()).unwrap_or(12usize).min(50);
+            json(req, 200, &engine.search_places(&q, limit))
+        }
         (tiny_http::Method::Get, "/api/status") => json(
             req,
             200,
             &serde_json::json!({
                 "packages": engine.packages,
                 "problems": engine.problems,
+                "maps": engine.maps.len(),
+                "places": engine.places.len(),
                 "model": engine.model_status(),
             }),
         ),
@@ -597,6 +776,8 @@ fn handle(engine: &Engine, mut req: tiny_http::Request) {
         _ => error(req, 404, "Not found"),
     }
 }
+
+pub mod eval;
 
 #[cfg(test)]
 mod tests;

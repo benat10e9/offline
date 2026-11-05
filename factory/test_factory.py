@@ -33,6 +33,15 @@ class TextTests(unittest.TestCase):
         self.assertEqual(d, bp.doc_id("medlineplus", "medlineplus.gov/heatillness.html"))
         self.assertNotEqual(bp.passage_id(d, 0, "a"), bp.passage_id(d, 0, "b"))
 
+    def test_catalogs_use_commercial_licenses_only(self):
+        import glob
+        import json
+        ok = {"LicenseRef-PublicDomain-USGov", "CC-BY-SA-4.0", "CC-BY-4.0", "ODbL-1.0"}
+        for path in glob.glob(os.path.join(os.path.dirname(__file__), "../catalog/sources/*.json")):
+            for s in json.load(open(path))["sources"]:
+                self.assertIn(s["license"], ok, f"{path}: {s['id']}")
+                self.assertNotIn("NC", s["license"])
+
     def test_catalog_is_commercially_safe(self):
         import json
         cat = json.load(open(os.path.join(os.path.dirname(__file__), "../catalog/sources/medical-survival.json")))

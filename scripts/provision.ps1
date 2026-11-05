@@ -70,10 +70,26 @@ if ($entries.Count -gt 0) {
 }
 
 Say "Content packages (content-dev release)"
-$pk = Join-Path $Tmp "packages.tar.gz"
-if (ReleaseAsset "content-dev" "packages.tar.gz" $pk) {
-  tar -xzf $pk -C (Join-Path $Root "packages")
-} else { Write-Host "  not published yet; run the 'content' workflow, then re-run" }
+foreach ($cat in "medical-survival", "wikipedia-top") {
+  $plist = Join-Path $Tmp "$cat.parts"
+  if (ReleaseAsset "content-dev" "$cat.parts.txt" $plist) {
+    $tgz = Join-Path $Tmp "$cat.tar.gz"
+    $out = [IO.File]::Create($tgz)
+    foreach ($part in (Get-Content $plist | Where-Object { $_ })) {
+      $pp = Join-Path $Tmp "part"
+      if (ReleaseAsset "content-dev" $part $pp) { $b = [IO.File]::ReadAllBytes($pp); $out.Write($b, 0, $b.Length) }
+    }
+    $out.Close()
+    tar -xzf $tgz -C (Join-Path $Root "packages")
+    Remove-Item $tgz
+    Write-Host "  ${cat}: ok"
+  } else { Write-Host "  ${cat}: not published yet (run the 'content' workflow with catalog=$cat)" }
+}
+Say "Map packages (maps-dev release)"
+$mp = Join-Path $Tmp "maps.tar.gz"
+if (ReleaseAsset "maps-dev" "maps-texas.tar.gz" $mp) {
+  tar -xzf $mp -C (Join-Path $Root "packages")
+} else { Write-Host "  not published yet; run the 'maps' workflow, then re-run" }
 if (-not (ReleaseAsset "content-dev" "dev-publisher.pub" (Join-Path $Root "trust\dev-publisher.pub"))) {
   Write-Host "  publisher key not published yet"
 }

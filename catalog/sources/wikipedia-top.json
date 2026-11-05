@@ -1,0 +1,25 @@
+{
+  "package": {
+    "id": "wikipedia-top",
+    "version": "0.1.0-dev",
+    "title": "Wikipedia, most-read English articles (text only)",
+    "editions": ["consumer", "police", "military", "ems"]
+  },
+  "rights_policy": "Wikipedia text is CC BY-SA 4.0. Commercial redistribution is allowed with attribution and ShareAlike: the reader shows each article's title and source, and this package is distributed under CC BY-SA. Checked 2026-11-05.",
+  "sources": [
+    {
+      "id": "wikipedia",
+      "kind": "zim",
+      "zim": "wikipedia_en_top",
+      "flavour": "nopic",
+      "title": "Wikipedia",
+      "publisher": "Wikipedia contributors",
+      "license": "CC-BY-SA-4.0",
+      "authority": "reference",
+      "jurisdictions": [],
+      "skip": "",
+      "rights_note": "CC BY-SA 4.0; attribution to Wikipedia contributors with a link to each article."
+    }
+  ],
+  "excluded": []
+}

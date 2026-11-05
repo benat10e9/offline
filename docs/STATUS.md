@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-11-05 (session 2)
+Last updated: 2026-11-05 (session 3, part 1)
 
 ## Done
 
@@ -18,18 +18,27 @@ Last updated: 2026-11-05 (session 2)
 - Dev signing key: public half in `trust/dev-publisher.pub`, secret only in the `KB_DEV_SIGNING_KEY` Actions secret.
 - ADRs 0011 (local server UI) and 0012 (first models). 45 Rust tests + 4 factory tests.
 
+**Session 3 (part 1):**
+- `kb eval` and `evals/medical-survival.jsonl` (50 questions: 40 in scope, 10 out-of-scope/equipment/jurisdiction traps, unsafe-answer patterns). Runs report-only in the content workflow; `--strict` fails on wrongly verified out-of-scope answers or unsafe text.
+- Offline maps: map packages (`maps/map.json`, PMTiles, gazetteer, fonts, icons), HTTP range serving, `/api/maps`, `/api/places`; Map view in the UI (MapLibre 5.24 CSP build, pmtiles 4.5, Protomaps basemaps 5.7.2, vendored with licenses); place search over towns, hospitals, clinics, pharmacies, fire/police stations, shelters, water, fuel and groceries.
+- `maps` workflow: Texas tiles from the latest Protomaps build (go-pmtiles 1.31.2, pinned SHA-256), places from Geofabrik via osmium, fonts/icons pinned to basemaps-assets 028c18f → maps-dev release.
+- Content workflow takes any catalog; `catalog/sources/wikipedia-top.json` (CC BY-SA, reference authority so it can never produce Verified). Packages over 1.9 GB are split into parts and reassembled by the provisioning scripts.
+- `kb build` handles asset-only packages (maps) and mixed packages.
+
+**Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
+
 ## Not yet verified on real hardware (by design, per Ben)
 
 - A real model answering through the app; actual speeds; 4B vs 8B quality.
 - The macOS app bundle launching from a drive (ad-hoc signed; downloaded with curl so no quarantine prompt expected).
 - The content workflow's full run (first run happens on this push; check its summary for package size and smoke-test results).
 
-## Next: session 3
+## Next
 
-1. Read the `content` and `app` workflow results; fix anything they surface.
-2. Evaluation set: 50 questions (medical, water, power, shelter) with expected sources, plus unsupported-answer cases; `kb eval` command and a CI job over the real package.
-3. Maps: Texas PMTiles (Planetiler) + MapLibre view in the UI + OSM place search; Valhalla routing (Windows build is the main risk).
-4. Compact Wikipedia package (CC BY-SA, attribution in reader) for the Essential edition sizing.
+1. Read content, maps and Wikipedia workflow results (sizes, eval); calibrate eval expectations.
+2. Valhalla routing for Texas (Windows build is the main risk).
+3. Drive composer: edition manifest → which packages and models go on a 32/64/128 GB drive.
+4. Commerce: storefront + Stripe test mode, customizer, portal, asset registry.
 
 ## Later
 

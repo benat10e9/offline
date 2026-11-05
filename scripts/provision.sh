@@ -97,11 +97,23 @@ if [ ${#MODEL_LINES[@]} -gt 0 ]; then
 fi
 
 say "Content packages (content-dev release)"
-if release_asset content-dev "packages.tar.gz" "$TMP/packages.tar.gz" 2>/dev/null; then
-  tar xzf "$TMP/packages.tar.gz" -C "$ROOT/packages"
-  ls "$ROOT/packages"
+for cat in medical-survival wikipedia-top; do
+  if release_asset content-dev "$cat.parts.txt" "$TMP/$cat.parts" 2>/dev/null; then
+    : > "$TMP/$cat.tar.gz"
+    while read -r part; do
+      [ -n "$part" ] || continue
+      release_asset content-dev "$part" "$TMP/part" && cat "$TMP/part" >> "$TMP/$cat.tar.gz"
+    done < "$TMP/$cat.parts"
+    tar xzf "$TMP/$cat.tar.gz" -C "$ROOT/packages" && rm -f "$TMP/$cat.tar.gz" "$TMP/part" && echo "  $cat: ok"
+  else
+    echo "  $cat: not published yet (run the 'content' workflow with catalog=$cat)"
+  fi
+done
+say "Map packages (maps-dev release)"
+if release_asset maps-dev "maps-texas.tar.gz" "$TMP/maps.tar.gz" 2>/dev/null; then
+  tar xzf "$TMP/maps.tar.gz" -C "$ROOT/packages" && echo "  maps-texas: ok"
 else
-  echo "  not published yet; run the 'content' workflow in GitHub Actions, then re-run this script"
+  echo "  not published yet; run the 'maps' workflow, then re-run this script"
 fi
 release_asset content-dev "dev-publisher.pub" "$ROOT/trust/dev-publisher.pub" 2>/dev/null \
   || echo "  publisher key not published yet"

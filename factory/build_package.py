@@ -278,12 +278,18 @@ def main():
                 report["failed"][src["id"]] = str(exc)
                 continue
             ndocs = npass = chars = dupes = 0
+            excluded = {}
+            rules = [(re.compile(x["pattern"]), x["reason"]) for x in src.get("exclude_passages", [])]
             for title, key, text in docs:
                 if args.max_docs and ndocs >= args.max_docs:
                     break
                 did = doc_id(src["id"], key)
                 ndocs += 1
                 for n, (heading, ptxt) in enumerate(split_passages(text)):
+                    rule = next((r for r in rules if r[0].search(ptxt)), None)
+                    if rule:  # curated out, with the reason recorded in the report
+                        excluded[rule[1]] = excluded.get(rule[1], 0) + 1
+                        continue
                     digest = hashlib.sha1(ptxt.encode()).digest()
                     if digest in seen_text:  # identical boilerplate across pages
                         dupes += 1
@@ -306,9 +312,11 @@ def main():
                 "id": src["id"], "title": src["title"], "publisher": src["publisher"], "license": src["license"],
                 "authority": src["authority"], "revision": src.get("revision"), "superseded_by": None,
                 "applies_to": [], "jurisdictions": src.get("jurisdictions", ["US"]), "url": origin,
+                **({"audience": src["audience"]} if src.get("audience") else {}),
             })
             report["sources"][src["id"]] = {"documents": ndocs, "passages": npass, "chars": chars,
-                                            "duplicates_dropped": dupes, "page_errors": errors.count}
+                                            "duplicates_dropped": dupes, "page_errors": errors.count,
+                                            "passages_excluded": excluded}
             print(f"   {ndocs} documents, {npass} passages, {chars / 1e6:.1f} M chars", flush=True)
 
     pkg = dict(cat["package"])

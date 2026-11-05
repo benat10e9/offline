@@ -46,7 +46,8 @@
       "license": "LicenseRef-PublicDomain-USGov",
       "authority": "government",
       "skip": "^[^/]+/[a-z]{2}(-[a-z]+)?/|/(es|spanish|espanol|languages|translations)(/|$)",
-      "rights_note": "CDC web content, public domain. The printed Yellow Book is published by Oxford University Press; only the online CDC text is used."
+      "rights_note": "CDC web content, public domain. The printed Yellow Book is published by Oxford University Press; only the online CDC text is used.",
+      "audience": "clinician"
     },
     {
       "id": "afh-10-644",
@@ -56,7 +57,13 @@
       "license": "LicenseRef-PublicDomain-USGov",
       "authority": "government",
       "url": "https://static.e-publishing.af.mil/production/1/af_a3/publication/afh10-644/afh10-644.pdf",
-      "fallback": "https://web.archive.org/web/2025id_/https://static.e-publishing.af.mil/production/1/af_a3/publication/afh10-644/afh10-644.pdf"
+      "fallback": "https://web.archive.org/web/2025id_/https://static.e-publishing.af.mil/production/1/af_a3/publication/afh10-644/afh10-644.pdf",
+      "exclude_passages": [
+        {
+          "pattern": "(?i)tourniquet",
+          "reason": "Older field tourniquet doctrine (e.g. periodic loosening) conflicts with current guidance in ATP 4-02.11 (2026) and FEMA CERT. Excluded pending clinician review."
+        }
+      ]
     },
     {
       "id": "atp-3-50-21",
@@ -65,7 +72,13 @@
       "publisher": "U.S. Army",
       "license": "LicenseRef-PublicDomain-USGov",
       "authority": "government",
-      "url": "https://armypubs.army.mil/epubs/DR_pubs/DR_a/pdf/web/ARN12086_ATP%203-50x21%20FINAL%20WEB%202.pdf"
+      "url": "https://armypubs.army.mil/epubs/DR_pubs/DR_a/pdf/web/ARN12086_ATP%203-50x21%20FINAL%20WEB%202.pdf",
+      "exclude_passages": [
+        {
+          "pattern": "(?i)tourniquet",
+          "reason": "Older field tourniquet doctrine (e.g. periodic loosening) conflicts with current guidance in ATP 4-02.11 (2026) and FEMA CERT. Excluded pending clinician review."
+        }
+      ]
     },
     {
       "id": "atp-4-02-11",
@@ -139,7 +152,9 @@
       "revision": "2021-12-21",
       "license": "LicenseRef-PublicDomain-USGov",
       "authority": "government",
-      "url": "https://jts.health.mil/assets/docs/cpgs/Prolonged_Casualty_Care_Guidelines_21_Dec_2021_ID91v1.1.pdf"
+      "url": "https://jts.health.mil/assets/docs/cpgs/Prolonged_Casualty_Care_Guidelines_21_Dec_2021_ID91v1.1.pdf",
+      "audience": "clinician",
+      "rights_note": " Written for trained medical personnel (prolonged casualty care)."
     }
   ],
   "excluded": [
@@ -155,5 +170,6 @@
       "title": "IFRC, WHO and Hesperian guides",
       "reason": "Non-commercial or all-rights-reserved terms."
     }
-  ]
+  ],
+  "curation_policy": "Passage exclusions and audience tags are content decisions recorded here with reasons. Each needs sign-off by a qualified clinician before a production release."
 }

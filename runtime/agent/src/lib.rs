@@ -105,13 +105,15 @@ impl ChatModel for LlamaServer {
 }
 
 pub const SYSTEM_PROMPT: &str = "You answer questions using ONLY the numbered source passages provided. \
-Rules: (1) Every sentence that states a fact or an instruction must end with the marker of the passage that \
-supports it, like [S1] or [S1][S3]. (2) Never use knowledge that is not in the passages. If the passages do not \
+Rules: (1) After every fact or instruction, write the marker of the passage that supports it, like [S1] or \
+[S1][S3]; a marker at the end of a sentence covers that sentence and the uncited sentences just before it. (2) Never use knowledge that is not in the passages. If the passages do not \
 cover part of the question, say so plainly instead of guessing. (3) Do not write a sources list; the application \
-shows sources. (4) For safety-critical steps, keep the passage's warnings. (5) Be concise and practical.";
+shows sources. (4) For safety-critical steps, keep the passage's warnings. (5) Be concise and practical. \
+(6) Passages marked (for health professionals) describe care by trained staff: say which steps need a health \
+professional and tell the user to get medical help; do not present those steps as things to do themselves.";
 
 /// Build the user turn: evidence notes, numbered passages, then the question.
-pub fn build_prompt(question: &str, assessment: &Assessment) -> String {
+pub fn build_prompt(question: &str, assessment: &Assessment, sources: &dyn SourceLookup) -> String {
     let mut s = String::new();
     if !assessment.notes.is_empty() {
         s.push_str("Notes about the available evidence (repeat these to the user if relevant):\n");
@@ -125,7 +127,12 @@ pub fn build_prompt(question: &str, assessment: &Assessment) -> String {
     s.push_str("Source passages:\n");
     for (i, h) in assessment.citable.iter().enumerate() {
         let heading = if h.heading.is_empty() { String::new() } else { format!(" — {}", h.heading) };
-        s.push_str(&format!("[S{}] {}{}\n{}\n\n", i + 1, h.title, heading, h.text.trim()));
+        let pro = if sources.source(&h.package_id, &h.source_id).is_some_and(|s| s.for_clinicians()) {
+            " (for health professionals)"
+        } else {
+            ""
+        };
+        s.push_str(&format!("[S{}] {}{}{}\n{}\n\n", i + 1, h.title, heading, pro, h.text.trim()));
     }
     s.push_str("Question: ");
     s.push_str(question);
@@ -200,10 +207,7 @@ pub fn verify_citations(answer: &str, shown: &[Hit]) -> Verification {
         })
         .to_string();
 
-    let uncited = split_sentences(&cleaned)
-        .into_iter()
-        .filter(|s| !marker_re().is_match(s) && !is_hedge(s) && s.split_whitespace().count() >= 4)
-        .collect();
+    let uncited = uncited_sentences(&cleaned);
 
     used.sort_unstable();
     let citations = used
@@ -222,6 +226,40 @@ pub fn verify_citations(answer: &str, shown: &[Hit]) -> Verification {
         .collect();
 
     Verification { text: cleaned, citations, invalid_markers: invalid, uncited_sentences: uncited }
+}
+
+/// Sentences no citation covers. A marker covers the sentences before it in the same
+/// paragraph, back to the previous marker (how people cite: "Claim. Claim. [S1]").
+/// Sentences after a paragraph's last marker, or in a paragraph with none, are uncited.
+fn uncited_sentences(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.split("\n\n") {
+        let mut pending: Vec<String> = Vec::new();
+        for line in para.split('\n') {
+            // Bullet and numbered-list items are separate claims: each needs its own marker.
+            let is_item = line.trim_start().starts_with(['-', '*', '•'])
+                || line.trim_start().chars().next().is_some_and(|c| c.is_ascii_digit());
+            if is_item {
+                out.append(&mut pending);
+            }
+            for sentence in split_sentences(line) {
+                if marker_re().is_match(&sentence) {
+                    pending.clear();
+                } else if !is_hedge(&sentence)
+                    && sentence.split_whitespace().count() >= 4
+                    && !sentence.trim_end().ends_with(':')
+                {
+                    // A lead-in such as "Follow these steps:" introduces claims; it makes none.
+                    pending.push(sentence);
+                }
+            }
+            if is_item {
+                out.append(&mut pending);
+            }
+        }
+        out.append(&mut pending);
+    }
+    out
 }
 
 fn split_sentences(s: &str) -> Vec<String> {
@@ -324,6 +362,13 @@ pub fn ask(
 ) -> Result<Answer, AgentError> {
     let assessment = search_only(library, sources, question, ctx, opts)?;
     let mut notes = assessment.notes.clone();
+    if assessment
+        .citable
+        .iter()
+        .any(|h| sources.source(&h.package_id, &h.source_id).is_some_and(|s| s.for_clinicians()))
+    {
+        notes.push("Some sources here are written for health professionals. Steps that need trained care are not things to attempt yourself; get medical help.".into());
+    }
 
     if assessment.class == EvidenceClass::Unsupported {
         return Ok(Answer {
@@ -338,7 +383,7 @@ pub fn ask(
         });
     }
 
-    let prompt = build_prompt(question, &assessment);
+    let prompt = build_prompt(question, &assessment, sources);
     let raw = model.chat(SYSTEM_PROMPT, &prompt)?;
     let v = verify_citations(&raw, &assessment.citable);
 
@@ -425,6 +470,35 @@ mod tests {
     }
 
     #[test]
+    fn a_marker_covers_preceding_sentences_in_its_paragraph() {
+        // Real 4B answer shape (generator question).
+        let v = verify_citations(
+            "No, you should never run a generator inside a garage, even if the door is open. \
+             It can lead to carbon monoxide poisoning [S1].",
+            &[hit("a")],
+        );
+        assert!(v.uncited_sentences.is_empty(), "{:?}", v.uncited_sentences);
+        // A claim after the last marker is still uncited.
+        let v = verify_citations("Boil water for one minute [S1]. Then add a pinch of salt for taste.", &[hit("a")]);
+        assert_eq!(v.uncited_sentences, vec!["Then add a pinch of salt for taste."]);
+        // A marker does not reach into the previous paragraph.
+        let v = verify_citations("Keep the generator outside at all times.\n\nUse a CO alarm [S1].", &[hit("a")]);
+        assert_eq!(v.uncited_sentences, vec!["Keep the generator outside at all times."]);
+        // Lead-ins make no claim.
+        let v = verify_citations(
+            "To signal for rescue, follow these steps:\n- Use a mirror to flash aircraft [S1]",
+            &[hit("a")],
+        );
+        assert!(v.uncited_sentences.is_empty(), "{:?}", v.uncited_sentences);
+        // Each list item needs its own marker.
+        let v = verify_citations(
+            "- Cool the burn with water for twenty minutes\n- Cover it with clean cloth [S1]",
+            &[hit("a")],
+        );
+        assert_eq!(v.uncited_sentences, vec!["- Cool the burn with water for twenty minutes"]);
+    }
+
+    #[test]
     fn hedges_are_not_counted_as_uncited() {
         let v = verify_citations(
             "Drain the oil [S1]. The passages do not cover torque values for this model.",
@@ -470,6 +544,7 @@ mod tests {
                 applies_to: vec![],
                 jurisdictions: vec![],
                 url: None,
+                audience: None,
             },
         );
         (dir, lib, src)
@@ -507,6 +582,31 @@ mod tests {
         .unwrap();
         assert_eq!(a.class, EvidenceClass::Unsupported);
         assert!(a.text.is_none());
+    }
+
+    #[test]
+    fn clinician_sources_are_labelled_and_noted() {
+        struct Capture(std::sync::Mutex<String>);
+        impl ChatModel for Capture {
+            fn chat(&self, _s: &str, u: &str) -> Result<String, AgentError> {
+                *self.0.lock().unwrap() = u.to_string();
+                Ok("Do not run a generator in a garage because of carbon monoxide [S1].".into())
+            }
+        }
+        let (_d, lib, mut src) = setup();
+        src.get_mut(&("pkg".to_string(), "fema".to_string())).unwrap().audience = Some("clinician".into());
+        let m = Capture(std::sync::Mutex::new(String::new()));
+        let a = ask(
+            &lib,
+            &src,
+            &m,
+            "Can I run my generator in the garage?",
+            &QuestionContext::default(),
+            &AskOptions::default(),
+        )
+        .unwrap();
+        assert!(m.0.lock().unwrap().contains("(for health professionals)"));
+        assert!(a.notes.iter().any(|n| n.contains("health professionals")));
     }
 
     #[test]

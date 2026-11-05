@@ -921,6 +921,7 @@ dependencies = [
  "kb-retrieval",
  "kb-routing",
  "kb-server",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

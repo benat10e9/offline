@@ -449,6 +449,7 @@ mod tests {
             applies_to: applies.iter().map(|s| s.to_string()).collect(),
             jurisdictions: juris.iter().map(|s| s.to_string()).collect(),
             url: None,
+            audience: None,
         }
     }
 

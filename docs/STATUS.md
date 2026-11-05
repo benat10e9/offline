@@ -57,6 +57,12 @@ Last updated: 2026-11-05 (session 3, part 2)
 - `kb eval` saves after every question, prints progress, `--limit`; model-eval step timeout keeps partial results.
 - docs/editions.md: measured component sizes and which drive each edition needs.
 
+**Session 3 (part 7) — first real model results (Qwen3 4B, 50 questions, CPU runner):**
+- 0 unsafe patterns; 10 answers withheld for lack of valid citations, 9 of them the out-of-scope/trap questions (correct); retrieval found the right source 40/41; ~97 s per answer on CPU.
+- Class 19/50 because the verifier demanded a marker on every sentence. Now a marker covers the preceding sentences in its paragraph; list items need their own; lead-ins ending in ":" are not claims. Re-checking the stored answers: 39/40 fully cited (the one flag is a genuine uncited claim).
+- Real answers exposed content problems no citation check can catch: the tourniquet answer blended current guidance with older doctrine (periodic loosening) from AFH 10-644 / ATP 3-50.21; the rabies answer gave clinician-only steps from CDC's clinician guide. Fixes: per-source passage exclusions with recorded reasons (tourniquet passages of those two manuals, pending clinician review); `audience: clinician` on JTS PCC and CDC Travelers' Health, labelled in prompts, rule to name steps that need a professional, note shown to the user.
+- 20-question quick set (`evals/medical-survival-quick.jsonl`, exact subset) is the model-eval default.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)

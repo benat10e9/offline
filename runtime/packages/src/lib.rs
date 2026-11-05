@@ -86,6 +86,16 @@ pub struct SourceRecord {
     pub jurisdictions: Vec<String>,
     #[serde(default)]
     pub url: Option<String>,
+    /// Who the source is written for: "public" (default) or "clinician". Clinician
+    /// material is labelled in prompts and answers so steps needing a professional are named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+}
+
+impl SourceRecord {
+    pub fn for_clinicians(&self) -> bool {
+        self.audience.as_deref() == Some("clinician")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

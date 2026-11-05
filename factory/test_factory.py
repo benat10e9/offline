@@ -53,5 +53,53 @@ class TextTests(unittest.TestCase):
         self.assertIn("druginfo", med["skip"])
 
 
+class ZimTests(unittest.TestCase):
+    def test_reads_a_real_zim(self):
+        try:
+            from libzim.writer import Creator, Hint, Item, StringProvider
+        except ImportError:
+            self.skipTest("libzim not installed")
+        import tempfile
+
+        class Page(Item):
+            def __init__(self, path, title, html):
+                super().__init__()
+                self.path, self.title, self.html = path, title, html
+
+            def get_path(self):
+                return self.path
+
+            def get_title(self):
+                return self.title
+
+            def get_mimetype(self):
+                return "text/html"
+
+            def get_contentprovider(self):
+                return StringProvider(self.html)
+
+            def get_hints(self):
+                return {Hint.FRONT_ARTICLE: True}
+
+        body = "<p>" + "Drink water slowly and rest in the shade. " * 12 + "</p>"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.zim")
+            with Creator(path).config_indexing(False, "eng") as c:
+                c.set_mainpath("heat.html")
+                for k, v in {"Title": "t", "Language": "eng", "Name": "t", "Creator": "t", "Publisher": "t",
+                             "Date": "2026-11-05", "Description": "t"}.items():
+                    c.add_metadata(k, v)
+                c.add_item(Page("heat.html", "Heat Illness | MedlinePlus", f"<main><h1>Heat</h1>{body}</main>"))
+                c.add_item(Page("ency/article/1.html", "Licensed", f"<main>{body}</main>"))
+                c.add_item(Page("medlineplus.gov/druginfo/meds/a1.html", "Licensed drug", f"<main>{body}</main>"))
+            errs = bp.SourceErrors()
+            import json
+            cat = json.load(open(os.path.join(os.path.dirname(__file__), "../catalog/sources/medical-survival.json")))
+            skip = next(x["skip"] for x in cat["sources"] if x["id"] == "medlineplus")
+            docs = list(bp.zim_docs(path, skip, errs))
+            self.assertEqual(errs.count, 0, errs.first)
+            self.assertEqual([t for t, _, _ in docs], ["Heat Illness"], "licensed section skipped, title cleaned")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,12 @@
     "id": "medical-survival",
     "version": "0.1.0-dev",
     "title": "Medical, first aid and emergency preparedness (U.S. government sources)",
-    "editions": ["consumer", "police", "military", "ems"]
+    "editions": [
+      "consumer",
+      "police",
+      "military",
+      "ems"
+    ]
   },
   "rights_policy": "Only U.S. federal government works (17 U.S.C. 105) in this package. Third-party material inside them is excluded where identified. Checked 2026-11-05; recheck before each release.",
   "sources": [
@@ -16,7 +21,7 @@
       "publisher": "U.S. National Library of Medicine",
       "license": "LicenseRef-PublicDomain-USGov",
       "authority": "government",
-      "skip": "/(ency|druginfo)/|^[^/]+/[a-z]{2}(-[a-z]+)?/|/(es|spanish|espanol|languages|translations)(/|$)",
+      "skip": "(^|/)(ency|druginfo)/|^[^/]+/[a-z]{2}(-[a-z]+)?/|(^|/)(es|spanish|espanol|languages|translations)(/|$)",
       "rights_note": "NLM-authored pages are public domain. A.D.A.M. encyclopedia (/ency/), ASHP drug monographs and Natural Medicines (/druginfo/) are licensed to NLM by third parties and are excluded."
     },
     {
@@ -138,8 +143,17 @@
     }
   ],
   "excluded": [
-    {"title": "Emergency Response Guidebook 2024", "reason": "Reproduction permitted but 'not for resale'; needs legal review for a paid product."},
-    {"title": "Nuclear War Survival Skills (1987 edition)", "reason": "1986 additions are copyright Cresson H. Kearny."},
-    {"title": "IFRC, WHO and Hesperian guides", "reason": "Non-commercial or all-rights-reserved terms."}
+    {
+      "title": "Emergency Response Guidebook 2024",
+      "reason": "Reproduction permitted but 'not for resale'; needs legal review for a paid product."
+    },
+    {
+      "title": "Nuclear War Survival Skills (1987 edition)",
+      "reason": "1986 additions are copyright Cresson H. Kearny."
+    },
+    {
+      "title": "IFRC, WHO and Hesperian guides",
+      "reason": "Non-commercial or all-rights-reserved terms."
+    }
   ]
 }

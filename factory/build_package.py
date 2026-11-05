@@ -172,7 +172,8 @@ def fetch_pdf(src, work):
     dest = os.path.join(work, src["id"] + ".pdf")
     if os.path.exists(dest) and open(dest, "rb").read(4) == b"%PDF":
         return dest
-    for u in filter(None, (src["url"], src.get("fallback"))):
+    archive = "https://web.archive.org/web/2026id_/" + src["url"]
+    for u in filter(None, (src["url"], src.get("fallback"), archive)):
         if curl(u, dest) and open(dest, "rb").read(4) == b"%PDF":
             return dest
     raise RuntimeError(f"download failed: {src['url']}")
@@ -188,13 +189,33 @@ def sha256_file(path):
 # ---------- documents ----------
 
 
-def zim_docs(path, skip):
+class SourceErrors:
+    """Counts per-page failures so a systematic error can't hide behind 'skipped' lines."""
+
+    def __init__(self):
+        self.count = 0
+        self.first = None
+
+    def add(self, exc):
+        self.count += 1
+        if self.first is None:
+            self.first = repr(exc)
+
+
+def zim_entry(arc, i):
+    # libzim >= 3.2 made this public; older releases only had the underscore name.
+    getter = getattr(arc, "get_entry_by_id", None) or getattr(arc, "_get_entry_by_id")
+    return getter(i)
+
+
+def zim_docs(path, skip, errors=None):
     from libzim.reader import Archive
     arc = Archive(path)
     skip_re = re.compile(skip) if skip else None
+    errors = errors if errors is not None else SourceErrors()
     for i in range(arc.entry_count):
         try:
-            e = arc._get_entry_by_id(i)
+            e = zim_entry(arc, i)
             if e.is_redirect or (skip_re and skip_re.search(e.path)) or re.match(r"(?i)h?ttps?:", e.path):
                 continue
             item = e.get_item()
@@ -204,7 +225,9 @@ def zim_docs(path, skip):
             if len(text) >= MIN_CHARS:
                 yield clean_title(e.title or e.path), e.path, text
         except Exception as exc:  # one bad page must not stop the build
-            print(f"    skipped entry {i}: {exc}", file=sys.stderr)
+            errors.add(exc)
+            if errors.count <= 5:
+                print(f"    skipped entry {i}: {exc!r}", file=sys.stderr)
 
 
 def doc_id(source_id, key):
@@ -223,6 +246,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--only", nargs="*", help="source ids to include (testing)")
     ap.add_argument("--max-docs", type=int, default=0, help="cap documents per source (testing)")
+    ap.add_argument("--require-all", action="store_true", help="exit non-zero if any source fails")
     args = ap.parse_args()
 
     cat = json.load(open(args.catalog))
@@ -237,9 +261,10 @@ def main():
         for src in sources:
             print(f"== {src['id']}", flush=True)
             try:
+                errors = SourceErrors()
                 if src["kind"] == "zim":
                     path, url = fetch_zim(src, args.work, urls)
-                    docs = zim_docs(path, src.get("skip"))
+                    docs = zim_docs(path, src.get("skip"), errors)
                     origin = url
                 else:
                     path = fetch_pdf(src, args.work)
@@ -270,12 +295,20 @@ def main():
                     }, ensure_ascii=False) + "\n")
                     npass += 1
                     chars += len(ptxt)
+            if ndocs == 0:
+                why = f"0 documents extracted; {errors.count} page errors, first: {errors.first}"
+                print(f"   FAILED: {why}", flush=True)
+                report["failed"][src["id"]] = why
+                continue
+            if errors.count:
+                print(f"   {errors.count} pages skipped with errors (first: {errors.first})", flush=True)
             records.append({
                 "id": src["id"], "title": src["title"], "publisher": src["publisher"], "license": src["license"],
                 "authority": src["authority"], "revision": src.get("revision"), "superseded_by": None,
                 "applies_to": [], "jurisdictions": src.get("jurisdictions", ["US"]), "url": origin,
             })
-            report["sources"][src["id"]] = {"documents": ndocs, "passages": npass, "chars": chars, "duplicates_dropped": dupes}
+            report["sources"][src["id"]] = {"documents": ndocs, "passages": npass, "chars": chars,
+                                            "duplicates_dropped": dupes, "page_errors": errors.count}
             print(f"   {ndocs} documents, {npass} passages, {chars / 1e6:.1f} M chars", flush=True)
 
     pkg = dict(cat["package"])
@@ -286,6 +319,8 @@ def main():
     print(json.dumps(report, indent=1))
     if not records:
         sys.exit("no sources built")
+    if args.require_all and report["failed"]:
+        sys.exit(f"sources failed: {sorted(report['failed'])}")
 
 
 if __name__ == "__main__":

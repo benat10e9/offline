@@ -46,5 +46,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install lxml
+      - run: pip install lxml libzim
       - run: python3 -m unittest factory/test_factory.py

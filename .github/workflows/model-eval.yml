@@ -75,3 +75,5 @@ jobs:
           for f in bench-${{ matrix.model }}.json bench-${{ matrix.model }}.txt eval-${{ matrix.model }}.json eval-${{ matrix.model }}.txt; do
             [ -f "$f" ] && gh release upload model-dev "$f" --clobber
           done
+          [ -f "eval-${{ matrix.model }}.json" ] && python3 scripts/review_sheet.py "eval-${{ matrix.model }}.json" "review-${{ matrix.model }}.csv" && gh release upload model-dev "review-${{ matrix.model }}.csv" --clobber
+          true

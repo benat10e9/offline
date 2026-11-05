@@ -51,6 +51,17 @@ pub struct EvalResult {
     pub violations: Vec<String>,
     pub seconds: f64,
     pub answer: Option<String>,
+    /// The passages the answer cites, as (marker, title, text), for human review of
+    /// whether each source actually supports the answer.
+    pub cited: Vec<CitedPassage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CitedPassage {
+    pub marker: usize,
+    pub source_id: String,
+    pub title: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,10 +93,21 @@ pub fn run(engine: &Engine, items: &[EvalItem], with_model: bool) -> anyhow::Res
             jurisdiction: it.jurisdiction.clone(),
         };
         let t = Instant::now();
+        let mut cited = Vec::new();
         let (assessment, answered, citations, answer) = if with_model {
             match engine.ask(&req)? {
                 AskResponse::Answer { answer, .. } => {
                     let n = answer.citations.len();
+                    for c in &answer.citations {
+                        if let Some(h) = answer.consulted.get(c.marker - 1) {
+                            cited.push(CitedPassage {
+                                marker: c.marker,
+                                source_id: h.source_id.clone(),
+                                title: h.title.clone(),
+                                text: h.text.clone(),
+                            });
+                        }
+                    }
                     let class = answer.class;
                     let mut a = answer.assessment.clone();
                     a.class = class; // grade the final class, after citation verification
@@ -130,6 +152,7 @@ pub fn run(engine: &Engine, items: &[EvalItem], with_model: bool) -> anyhow::Res
             violations,
             seconds,
             answer,
+            cited,
         });
     }
     let oos: Vec<&EvalResult> = results

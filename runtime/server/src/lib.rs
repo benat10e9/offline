@@ -128,6 +128,16 @@ pub struct MapInfo {
     #[serde(skip)]
     pub dir: PathBuf,
     pub meta: serde_json::Value,
+    pub routing: bool,
+    #[serde(skip)]
+    router: Arc<std::sync::OnceLock<Option<kb_routing::Router>>>,
+}
+
+impl MapInfo {
+    /// Load the road graph on first use (a statewide graph takes a few seconds).
+    pub fn router(&self) -> Option<&kb_routing::Router> {
+        self.router.get_or_init(|| kb_routing::Router::load(&self.dir.join(kb_routing::ROUTING_DIR)).ok()).as_ref()
+    }
 }
 
 /// A searchable place from a map package's gazetteer.
@@ -192,7 +202,14 @@ impl Engine {
                     let map_json = dir.join("maps").join("map.json");
                     if let Ok(bytes) = std::fs::read(&map_json) {
                         if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                            maps.push(MapInfo { package_id: m.id.clone(), dir: dir.join("maps"), meta });
+                            let routing = dir.join("maps").join(kb_routing::ROUTING_DIR).join("meta.json").is_file();
+                            maps.push(MapInfo {
+                                package_id: m.id.clone(),
+                                dir: dir.join("maps"),
+                                meta,
+                                routing,
+                                router: Arc::new(std::sync::OnceLock::new()),
+                            });
                             places.extend(load_places(&dir.join("maps").join("gazetteer.jsonl")));
                         }
                     }
@@ -726,6 +743,29 @@ fn handle(engine: &Engine, mut req: tiny_http::Request) {
             }
         }
         (tiny_http::Method::Get, "/api/maps") => json(req, 200, &engine.maps),
+        (tiny_http::Method::Get, "/api/route") => {
+            let point = |k: &str| -> Option<[f64; 2]> {
+                let v = query_param(&url, k)?;
+                let (a, b) = v.split_once(',')?;
+                let (lat, lon) = (a.trim().parse::<f64>().ok()?, b.trim().parse::<f64>().ok()?);
+                ((-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)).then_some([lat, lon])
+            };
+            let (Some(from), Some(to)) = (point("from"), point("to")) else {
+                return error(req, 400, "Give ?from=lat,lon&to=lat,lon");
+            };
+            let router = engine.maps.iter().filter(|m| m.routing).find_map(|m| m.router());
+            match router {
+                None => error(req, 404, "No routing data is installed on this drive."),
+                Some(r) => match r.route(from, to) {
+                    Some(route) => json(req, 200, &serde_json::json!({ "route": route, "notes": r.meta.notes })),
+                    None => error(
+                        req,
+                        404,
+                        "No road route found between these points (one may be more than 5 km from a road).",
+                    ),
+                },
+            }
+        }
         (tiny_http::Method::Get, "/api/places") => {
             let q = query_param(&url, "q").unwrap_or_default();
             let limit = query_param(&url, "limit").and_then(|l| l.parse().ok()).unwrap_or(12usize).min(50);

@@ -110,6 +110,14 @@ enum Cmd {
         #[arg(long)]
         strict: bool,
     },
+    /// Build offline routing files from an OpenStreetMap extract (.osm.pbf).
+    RouteBuild {
+        #[arg(long)]
+        pbf: PathBuf,
+        /// Output folder, normally <map package src>/maps/routing
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Print this machine's model tier from a models.json catalog.
     Tier {
         #[arg(long)]
@@ -397,6 +405,12 @@ fn main() -> Result<()> {
             if strict && (s.out_of_scope_wrongly_verified > 0 || s.safety_violations > 0) {
                 std::process::exit(3);
             }
+        }
+        Cmd::RouteBuild { pbf, out } => {
+            let t = std::time::Instant::now();
+            let meta = kb_routing::build_from_pbf(&pbf, &out)?;
+            println!("{}", serde_json::to_string_pretty(&meta)?);
+            println!("built in {:.0}s", t.elapsed().as_secs_f64());
         }
         Cmd::Tier { catalog } => {
             let c = kb_inference::ModelCatalog::load(&catalog)?;

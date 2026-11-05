@@ -163,6 +163,14 @@ fn add_map_package(root: &Path) {
         .join("\n"),
     )
     .unwrap();
+    // A two-street road network near Austin.
+    let coords: std::collections::HashMap<i64, [f64; 2]> =
+        [(1, [30.27, -97.74]), (2, [30.27, -97.73]), (3, [30.28, -97.73])].into_iter().collect();
+    let ways = vec![
+        kb_routing::RoadWay { nodes: vec![1, 2], speed_kmh: 40.0, oneway: 0 },
+        kb_routing::RoadWay { nodes: vec![2, 3], speed_kmh: 40.0, oneway: 0 },
+    ];
+    kb_routing::build(&ways, &coords, &maps.join(kb_routing::ROUTING_DIR)).unwrap();
     let key = KeyPair::generate().unwrap();
     let m = build_manifest(
         &pkg,
@@ -221,6 +229,15 @@ fn map_packages_places_and_ranges() {
     assert!(matches!(
         ureq::get(&format!("{base}/maps/maps-test/test.pmtiles")).set("Range", "bytes=5000-6000").call().unwrap_err(),
         ureq::Error::Status(416, _)
+    ));
+    assert_eq!(maps[0]["routing"], true);
+    let route = get(&format!("{base}/api/route?from=30.2701,-97.7401&to=30.2799,-97.7301"));
+    let d = route["route"]["distance_m"].as_f64().unwrap();
+    assert!(d > 1800.0 && d < 2600.0, "two ~1 km legs: {d}");
+    assert!(route["route"]["coordinates"].as_array().unwrap().len() >= 3);
+    assert!(matches!(
+        ureq::get(&format!("{base}/api/route?from=999,0&to=30,-97")).call().unwrap_err(),
+        ureq::Error::Status(400, _)
     ));
     let js = ureq::get(&format!("{base}/vendor/maplibre-gl-csp.js")).call().unwrap();
     assert!(js.header("Content-Type").unwrap().starts_with("text/javascript"));

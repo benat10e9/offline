@@ -18,6 +18,7 @@ kb-evidence.workspace = true
 kb-agent.workspace = true
 kb-inference.workspace = true
 kb-server.workspace = true
+kb-routing.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

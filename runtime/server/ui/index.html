@@ -26,6 +26,12 @@
     <div class="map-side">
       <label class="visually-hidden" for="place-q">Find a place</label>
       <input id="place-q" type="search" autocomplete="off" placeholder="Find a town, hospital, shelter, pharmacy…">
+      <div id="directions" class="directions" hidden>
+        <p class="dir-row"><span class="dir-label">From</span> <span id="dir-from">Choose a place</span></p>
+        <p class="dir-row"><span class="dir-label">To</span> <span id="dir-to">Choose a place</span></p>
+        <p id="dir-summary" class="dir-summary" aria-live="polite"></p>
+        <button type="button" id="dir-clear">Clear directions</button>
+      </div>
       <ol id="place-results" class="place-results"></ol>
       <p id="map-note" class="hint"></p>
     </div>

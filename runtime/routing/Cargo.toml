@@ -1,0 +1,19 @@
+[package]
+name = "kb-routing"
+description = "Offline routing: contraction hierarchies over a prebuilt OSM road graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fast_paths.workspace = true
+osmpbf.workspace = true
+bincode.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

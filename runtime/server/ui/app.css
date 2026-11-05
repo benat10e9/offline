@@ -161,3 +161,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 
 [hidden] { display: none !important; }
+
+.place-results li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px; }
+.place-results .route-btn {
+  width: auto; display: inline-block; font-size: 13px; padding: 4px 8px; border: 1px solid var(--rule); color: var(--ink-2);
+}
+.directions { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.dir-row { margin: 2px 0; }
+.dir-label { display: inline-block; width: 44px; color: var(--ink-2); font-size: 14px; }
+.dir-summary { margin: 8px 0; font-weight: 600; }
+.dir-summary small { display: block; font-weight: 400; color: var(--ink-2); font-size: 13px; }
+#dir-clear { border: 1px solid var(--rule); background: none; border-radius: 8px; padding: 4px 10px; cursor: pointer; }

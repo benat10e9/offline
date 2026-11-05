@@ -11,7 +11,7 @@ on:
         default: "14"
   push:
     branches: [main]
-    paths: ["factory/build_maps.py", ".github/workflows/maps.yml"]
+    paths: ["factory/build_maps.py", "runtime/routing/**", ".github/workflows/maps.yml"]
 
 permissions:
   contents: write
@@ -28,7 +28,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
       - name: Free disk space
@@ -71,6 +71,8 @@ jobs:
           python3 factory/build_maps.py --region "$REGION" --title "$TITLE" --bbox="$BBOX" \
             --pmtiles "$REGION.pmtiles" --places places.geojsonseq --assets assets \
             --out "src/maps-$REGION" --maxzoom "${{ inputs.maxzoom || '14' }}"
+          /usr/bin/time -v target/release/kb route-build --pbf region.osm.pbf --out "src/maps-$REGION/maps/routing" 2> route-build.time
+          grep -E "Maximum resident|Elapsed" route-build.time | tee -a "$GITHUB_STEP_SUMMARY"
           umask 077 && printf '%s\n' "$KB_DEV_SIGNING_KEY" > dev.key
           target/release/kb build --src "src/maps-$REGION" --out "pkgs/maps-$REGION" --key dev.key
           rm -f dev.key
@@ -82,7 +84,9 @@ jobs:
           tar czf "maps-$REGION.tar.gz" -C pkgs .
           {
             echo "maps-$REGION package"
-            du -sh "pkgs/maps-$REGION" "pkgs/maps-$REGION/maps/$REGION.pmtiles" "pkgs/maps-$REGION/maps/gazetteer.jsonl" "pkgs/maps-$REGION/maps/assets"
+            du -sh "pkgs/maps-$REGION" "pkgs/maps-$REGION/maps/$REGION.pmtiles" "pkgs/maps-$REGION/maps/gazetteer.jsonl" "pkgs/maps-$REGION/maps/assets" "pkgs/maps-$REGION/maps/routing"
+            cat "pkgs/maps-$REGION/maps/routing/meta.json"
+            grep -E "Maximum resident|Elapsed" route-build.time
             ls -l "maps-$REGION.tar.gz"
             python3 -c "import json;m=json.load(open('pkgs/maps-$REGION/maps/map.json'));print('places:',m['places'],'maxzoom:',m['maxzoom'])"
           } | tee sizes-maps.txt | tee -a "$GITHUB_STEP_SUMMARY"

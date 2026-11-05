@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-11-05 (session 3, part 1)
+Last updated: 2026-11-05 (session 3, part 2)
 
 ## Done
 
@@ -25,6 +25,11 @@ Last updated: 2026-11-05 (session 3, part 1)
 - Content workflow takes any catalog; `catalog/sources/wikipedia-top.json` (CC BY-SA, reference authority so it can never produce Verified). Packages over 1.9 GB are split into parts and reassembled by the provisioning scripts.
 - `kb build` handles asset-only packages (maps) and mixed packages.
 
+**Session 3 (part 2):**
+- Offline driving directions in-process (ADR 0013, Valhalla dropped): `kb-routing` builds a junction graph from OSM (car profile, one-ways, largest connected component, contraction hierarchies via fast_paths) and routes with road geometry; `kb route-build`; `/api/route`; From/To buttons, route line, distance and time in the Map view. Turn restrictions not modelled; the UI says so.
+- maps workflow now builds `maps/routing/` and reports build time and peak memory.
+- 50 Rust tests.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)
@@ -36,7 +41,7 @@ Last updated: 2026-11-05 (session 3, part 1)
 ## Next
 
 1. Read content, maps and Wikipedia workflow results (sizes, eval); calibrate eval expectations.
-2. Valhalla routing for Texas (Windows build is the main risk).
+2. Check the Texas routing build's memory/time and route quality on real trips.
 3. Drive composer: edition manifest → which packages and models go on a 32/64/128 GB drive.
 4. Commerce: storefront + Stripe test mode, customizer, portal, asset registry.
 

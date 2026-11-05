@@ -7,6 +7,7 @@ members = [
   "runtime/evidence",
   "runtime/agent",
   "runtime/inference",
+  "runtime/routing",
   "runtime/server",
   "runtime/cli",
 ]
@@ -25,6 +26,7 @@ kb-evidence = { path = "runtime/evidence" }
 kb-agent = { path = "runtime/agent" }
 kb-inference = { path = "runtime/inference" }
 kb-server = { path = "runtime/server" }
+kb-routing = { path = "runtime/routing" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -41,3 +43,6 @@ sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 regex = "1"
 tempfile = "3"
 tiny_http = "0.12"
+fast_paths = "1"
+osmpbf = "0.3"
+bincode = "1"

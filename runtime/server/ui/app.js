@@ -278,6 +278,7 @@ async function initMap() {
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-left");
   mapState.map = map;
+  mapState.routing = maps.some((x) => x.routing);
   $("map-note").textContent = `${m.meta.title || m.meta.region}: ${Number(m.meta.places || 0).toLocaleString()} places searchable offline.`;
 }
 
@@ -292,9 +293,68 @@ function searchPlaces() {
     list.replaceChildren(...places.map((p) => el("li", {},
       el("button", { type: "button", on: { click: () => goToPlace(p) } },
         el("span", {}, p.name),
-        el("span", { class: "pk" }, [p.kind, p.context].filter(Boolean).join(", "))))));
+        el("span", { class: "pk" }, [p.kind, p.context].filter(Boolean).join(", "))),
+      mapState && mapState.routing ? el("button", { type: "button", class: "route-btn", "aria-label": `Directions from ${p.name}`, on: { click: () => setEnd("from", p) } }, "From") : null,
+      mapState && mapState.routing ? el("button", { type: "button", class: "route-btn", "aria-label": `Directions to ${p.name}`, on: { click: () => setEnd("to", p) } }, "To") : null)));
     if (!places.length) list.append(el("li", { class: "hint" }, "No matching places in the offline map."));
   }, 150);
+}
+
+// ---------- directions ----------
+const ends = { from: null, to: null };
+
+function setEnd(which, p) {
+  ends[which] = p;
+  $("directions").hidden = false;
+  $(`dir-${which}`).textContent = p.name;
+  if (ends.from && ends.to) routeNow();
+  else goToPlace(p);
+}
+
+function fmtDuration(s) {
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+async function routeNow() {
+  const sum = $("dir-summary");
+  sum.textContent = "Finding a route…";
+  const q = `from=${ends.from.lat},${ends.from.lon}&to=${ends.to.lat},${ends.to.lon}`;
+  const r = await fetch(`/api/route?${q}`);
+  const data = await r.json();
+  if (!r.ok) { sum.textContent = data.error || "No route found."; clearRouteLine(); return; }
+  const route = data.route;
+  const miles = route.distance_m / 1609.344;
+  sum.replaceChildren(
+    document.createTextNode(`${miles.toFixed(miles < 10 ? 1 : 0)} mi, about ${fmtDuration(route.duration_s)} by car`),
+    el("small", {}, "Estimated from road types. Turn restrictions and closures are not known offline."));
+  drawRoute(route.coordinates);
+}
+
+function drawRoute(coords) {
+  const map = mapState.map;
+  const data = { type: "Feature", geometry: { type: "LineString", coordinates: coords }, properties: {} };
+  if (map.getSource("route")) map.getSource("route").setData(data);
+  else {
+    map.addSource("route", { type: "geojson", data });
+    map.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-join": "round", "line-cap": "round" }, paint: { "line-color": "#ffffff", "line-width": 9 } });
+    map.addLayer({ id: "route", type: "line", source: "route", layout: { "line-join": "round", "line-cap": "round" }, paint: { "line-color": "#1f4e79", "line-width": 5 } });
+  }
+  const lons = coords.map((c) => c[0]), lats = coords.map((c) => c[1]);
+  map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 60, maxZoom: 15 });
+}
+
+function clearRouteLine() {
+  const map = mapState && mapState.map;
+  if (map && map.getSource("route")) map.getSource("route").setData({ type: "FeatureCollection", features: [] });
+}
+
+function clearDirections() {
+  ends.from = ends.to = null;
+  $("dir-from").textContent = $("dir-to").textContent = "Choose a place";
+  $("dir-summary").replaceChildren();
+  $("directions").hidden = true;
+  clearRouteLine();
 }
 
 function goToPlace(p) {
@@ -309,6 +369,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("tab-ask").addEventListener("click", () => showView("ask"));
   $("tab-map").addEventListener("click", () => showView("map").catch((e) => { $("map-note").textContent = String(e.message || e); }));
   $("place-q").addEventListener("input", searchPlaces);
+  $("dir-clear").addEventListener("click", clearDirections);
   setupContext();
   refreshStatus();
   $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); submit("ask"); });

@@ -39,7 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/local/.ghcup /usr/share/swift /usr/local/share/powershell /usr/local/lib/node_modules
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
       - run: rustup show
       - uses: Swatinem/rust-cache@v2
       - name: Tools
@@ -51,7 +55,12 @@ jobs:
       - name: Build kb
         run: cargo build --release -p kb-cli
       - name: Acquire and convert sources
-        run: python3 factory/build_package.py "catalog/sources/$CAT.json" --work work --out "src/$CAT"
+        run: |
+          python3 factory/build_package.py "catalog/sources/$CAT.json" --work work --out "src/$CAT"
+          # The source archives are no longer needed; indexing needs the space.
+          du -sh work "src/$CAT" | tee disk.txt
+          rm -rf work
+          df -h / | tee -a disk.txt
       - name: Index, sign, verify
         env:
           KB_DEV_SIGNING_KEY: ${{ secrets.KB_DEV_SIGNING_KEY }}
@@ -59,7 +68,8 @@ jobs:
           umask 077
           printf '%s\n' "$KB_DEV_SIGNING_KEY" > dev.key
           mkdir -p pkgs
-          target/release/kb build --src src/$CAT --out pkgs/$CAT --key dev.key
+          set -o pipefail
+          target/release/kb build --src "src/$CAT" --out "pkgs/$CAT" --key dev.key --move-passages 2>&1 | tee build.log
           rm -f dev.key
           target/release/kb verify --full --pkg pkgs/$CAT --trust trust/dev-publisher.pub
       - name: Measure
@@ -94,7 +104,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          { echo "run ${{ github.run_id }} failed"; df -h /; free -m; ls -la "src/$CAT" 2>/dev/null; tail -c 20000 build.log 2>/dev/null; \
+          rm -rf work pkgs || true
+          { echo "run ${{ github.run_id }} failed"; cat disk.txt 2>/dev/null; df -h /; free -m; ls -la "src/$CAT" 2>/dev/null; tail -c 20000 build.log 2>/dev/null; \
             cat "src/$CAT/report.json" 2>/dev/null; tail -50 eval.txt 2>/dev/null; } > "$CAT-failure.txt"
           gh release view content-dev >/dev/null 2>&1 || gh release create content-dev --prerelease --title "Content (development builds)" --notes "dev"
           gh release upload content-dev "$CAT-failure.txt" --clobber

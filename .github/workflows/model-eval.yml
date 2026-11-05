@@ -1,0 +1,77 @@
+name: model-eval
+
+# Runs a real model through the full pipeline (retrieval -> evidence -> llama-server ->
+# citation verification) on the evaluation set, on a CPU-only Linux runner.
+# Correctness and citation behaviour are real; speeds are NOT representative of a
+# laptop with a GPU or Apple Silicon. Results go to the model-dev release.
+on:
+  workflow_dispatch:
+    inputs:
+      questions:
+        description: "Question file under evals/"
+        default: medical-survival.jsonl
+
+permissions:
+  contents: write
+
+env:
+  LLAMA_TAG: b11747
+  LLAMA_ASSET: llama-b11747-bin-ubuntu-x64.tar.gz
+  LLAMA_SHA256: 6e9e6eb4db7e2133fed8dfaf141fb1abfdd5b18db4b360be45245e0f91ffca1e
+
+jobs:
+  eval:
+    name: eval (${{ matrix.model }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { model: qwen3-4b-q4km, file: Qwen3-4B-Q4_K_M.gguf, repo: Qwen/Qwen3-4B-GGUF }
+          - { model: qwen3-8b-q4km, file: Qwen3-8B-Q4_K_M.gguf, repo: Qwen/Qwen3-8B-GGUF }
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Build kb
+        run: cargo build --release -p kb-cli
+      - name: Assemble a drive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p drive/bin/linux-x86_64/cpu drive/models drive/packages drive/trust
+          curl -fsSL -o llama.tgz "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_TAG/$LLAMA_ASSET"
+          echo "$LLAMA_SHA256  llama.tgz" | sha256sum -c -
+          mkdir x && tar xzf llama.tgz -C x
+          cp -R "$(dirname "$(find x -name llama-server -type f | head -1)")"/. drive/bin/linux-x86_64/cpu/
+          curl -fsSL -o "drive/models/${{ matrix.file }}" "https://huggingface.co/${{ matrix.repo }}/resolve/main/${{ matrix.file }}"
+          ls -l drive/models
+          cat > drive/models/models.json <<JSON
+          {"models":[{"id":"${{ matrix.model }}","file":"${{ matrix.file }}","min_ram_gb":0,"context":8192,"license":"Apache-2.0","safety_approved":false}]}
+          JSON
+          gh release download content-dev --pattern "medical-survival.parts.txt" --output parts.txt --clobber
+          : > med.tgz
+          while read -r p; do [ -n "$p" ] && gh release download content-dev --pattern "$p" --output part --clobber && cat part >> med.tgz; done < parts.txt
+          tar xzf med.tgz -C drive/packages
+          cp trust/dev-publisher.pub drive/trust/
+          ls drive/packages
+      - name: Benchmark (CPU only)
+        run: |
+          target/release/kb bench --root drive --model "${{ matrix.model }}" --allow-unevaluated \
+            --out "bench-${{ matrix.model }}.json" | tee "bench-${{ matrix.model }}.txt"
+      - name: Evaluate answers
+        run: |
+          set -o pipefail
+          target/release/kb eval --root drive --questions "evals/${{ inputs.questions || 'medical-survival.jsonl' }}" \
+            --with-model --allow-unevaluated --out "eval-${{ matrix.model }}.json" | tee "eval-${{ matrix.model }}.txt"
+      - name: Publish
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view model-dev >/dev/null 2>&1 || gh release create model-dev --prerelease \
+            --title "Model evaluations (development)" --notes "CPU-only GitHub runner. Speeds are not representative of customer hardware."
+          for f in bench-${{ matrix.model }}.json bench-${{ matrix.model }}.txt eval-${{ matrix.model }}.json eval-${{ matrix.model }}.txt; do
+            [ -f "$f" ] && gh release upload model-dev "$f" --clobber
+          done

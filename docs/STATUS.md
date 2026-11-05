@@ -50,6 +50,13 @@ Last updated: 2026-11-05 (session 3, part 2)
 - Wikipedia top 50,000 articles built: 1.73 M passages, 7.0 GB on disk / 5.1 GB compressed with the old format.
 - Package format: index stores term frequencies without positions; passages.jsonl no longer shipped (text is stored in the index). Medical package 84 MB → 31 MB with identical eval (50/50, 40/41). Projected Wikipedia ~2.6 GB.
 
+**Session 3 (part 6):**
+- Wikipedia (50,000 articles) now 1.5 GB on disk / 1.2 GB compressed (was 7.0 GB).
+- Mixed libraries: up to N candidates per package; citations ordered by authority, then score. Content CI evaluates every non-medical package mounted together with the medical library (strict gate).
+- Road graph unloads after 10 idle minutes.
+- `kb eval` saves after every question, prints progress, `--limit`; model-eval step timeout keeps partial results.
+- docs/editions.md: measured component sizes and which drive each edition needs.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)

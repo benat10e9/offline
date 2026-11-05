@@ -10,6 +10,9 @@ on:
       questions:
         description: "Question file under evals/"
         default: medical-survival.jsonl
+      limit:
+        description: "Number of questions (CPU runs of the 8B model take about 6 min each)"
+        default: "50"
 
 permissions:
   contents: write
@@ -61,10 +64,11 @@ jobs:
           target/release/kb bench --root drive --model "${{ matrix.model }}" --allow-unevaluated \
             --out "bench-${{ matrix.model }}.json" | tee "bench-${{ matrix.model }}.txt"
       - name: Evaluate answers
+        timeout-minutes: 280
         run: |
           set -o pipefail
           target/release/kb eval --root drive --questions "evals/${{ inputs.questions || 'medical-survival.jsonl' }}" \
-            --with-model --allow-unevaluated --out "eval-${{ matrix.model }}.json" | tee "eval-${{ matrix.model }}.txt"
+            --with-model --allow-unevaluated --limit "${{ inputs.limit || '50' }}" --out "eval-${{ matrix.model }}.json" | tee "eval-${{ matrix.model }}.txt"
       - name: Publish
         if: always()
         env:

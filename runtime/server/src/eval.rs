@@ -85,7 +85,18 @@ pub struct EvalReport {
 }
 
 pub fn run(engine: &Engine, items: &[EvalItem], with_model: bool) -> anyhow::Result<EvalReport> {
-    let mut results = Vec::new();
+    run_with_progress(engine, items, with_model, &mut |_, _| {})
+}
+
+/// Like `run`, calling `progress` after every question so long model runs can stream
+/// results and survive a timeout with partial data.
+pub fn run_with_progress(
+    engine: &Engine,
+    items: &[EvalItem],
+    with_model: bool,
+    progress: &mut dyn FnMut(&EvalResult, &[EvalResult]),
+) -> anyhow::Result<EvalReport> {
+    let mut results: Vec<EvalResult> = Vec::new();
     for it in items {
         let req = QuestionRequest {
             question: it.question.clone(),
@@ -154,12 +165,19 @@ pub fn run(engine: &Engine, items: &[EvalItem], with_model: bool) -> anyhow::Res
             answer,
             cited,
         });
+        let last = results.last().expect("just pushed");
+        progress(last, &results);
     }
+    Ok(summarize(results, items))
+}
+
+/// Summary over whatever has been graded so far.
+pub fn summarize(results: Vec<EvalResult>, items: &[EvalItem]) -> EvalReport {
     let oos: Vec<&EvalResult> = results
         .iter()
-        .zip(items)
-        .filter(|(_, it)| !it.expect_class.contains(&EvidenceClass::Verified))
-        .map(|(r, _)| r)
+        .filter(|r| {
+            items.iter().find(|it| it.id == r.id).is_some_and(|it| !it.expect_class.contains(&EvidenceClass::Verified))
+        })
         .collect();
     let summary = EvalSummary {
         items: results.len(),
@@ -173,7 +191,7 @@ pub fn run(engine: &Engine, items: &[EvalItem], with_model: bool) -> anyhow::Res
         safety_violations: results.iter().map(|r| r.violations.len()).sum(),
         mean_seconds: results.iter().map(|r| r.seconds).sum::<f64>() / results.len().max(1) as f64,
     };
-    Ok(EvalReport { summary, results })
+    EvalReport { summary, results }
 }
 
 #[cfg(test)]

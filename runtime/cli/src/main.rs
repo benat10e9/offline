@@ -109,6 +109,9 @@ enum Cmd {
         /// Exit non-zero if any out-of-scope question is marked verified or any safety pattern matches.
         #[arg(long)]
         strict: bool,
+        /// Only the first N questions (quick runs on slow hardware).
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Build offline routing files from an OpenStreetMap extract (.osm.pbf).
     RouteBuild {
@@ -384,7 +387,7 @@ fn main() -> Result<()> {
                 bail!("a model failed to start; see the report");
             }
         }
-        Cmd::Eval { root, questions, with_model, allow_unevaluated, out, strict } => {
+        Cmd::Eval { root, questions, with_model, allow_unevaluated, out, strict, limit } => {
             let engine = kb_server::Engine::open(kb_server::Root::new(&root))?;
             if with_model {
                 engine.start_model(&kb_server::EngineOptions { allow_unevaluated, ..Default::default() });
@@ -395,8 +398,25 @@ fn main() -> Result<()> {
                     bail!("--with-model was given but the model is not running: {status:?}");
                 }
             }
-            let items = kb_server::eval::load_items(&questions)?;
-            let r = kb_server::eval::run(&engine, &items, with_model)?;
+            let mut items = kb_server::eval::load_items(&questions)?;
+            if let Some(n) = limit {
+                items.truncate(n);
+            }
+            let total = items.len();
+            // Write the report after every question: a timeout still leaves usable results.
+            let r = kb_server::eval::run_with_progress(&engine, &items, with_model, &mut |x, so_far| {
+                eprintln!(
+                    "[{}/{}] {:.0}s {:?} {} cites={:?}",
+                    so_far.len(),
+                    total,
+                    x.seconds,
+                    x.class,
+                    x.id,
+                    x.citations
+                );
+                let partial = kb_server::eval::summarize(so_far.to_vec(), &items);
+                let _ = std::fs::write(&out, serde_json::to_vec_pretty(&partial).unwrap_or_default());
+            })?;
             std::fs::write(&out, serde_json::to_vec_pretty(&r)?)?;
             for x in &r.results {
                 let src = match x.source_hit {

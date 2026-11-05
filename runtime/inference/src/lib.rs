@@ -110,6 +110,8 @@ pub fn binary_name() -> &'static str {
 /// Candidate binaries under `bin_root`, in preference order, that exist on disk.
 pub fn candidate_binaries(bin_root: &Path) -> Vec<(String, PathBuf)> {
     let plat = platform_dir();
+    // Absolute: the server is started with its own folder as the working directory.
+    let bin_root = std::fs::canonicalize(bin_root).unwrap_or_else(|_| bin_root.to_path_buf());
     backend_preference()
         .into_iter()
         .map(|b| (b.to_string(), bin_root.join(&plat).join(b).join(binary_name())))
@@ -196,6 +198,9 @@ impl Supervisor {
 
     fn spawn(bin: &Path, cfg: &ServerConfig) -> Result<(Child, u16), InferenceError> {
         let port = free_local_port()?;
+        let mut cfg = cfg.clone();
+        cfg.model_path = std::fs::canonicalize(&cfg.model_path).unwrap_or(cfg.model_path);
+        let cfg = &cfg;
         let mut cmd = Command::new(bin);
         cmd.args(server_args(cfg, port)).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(dir) = bin.parent() {
@@ -316,6 +321,44 @@ mod tests {
         });
         assert!(health_ok(port));
         assert!(!health_ok(free_local_port().unwrap()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn starts_from_a_relative_root_with_relative_model() {
+        // A fake llama-server: checks the model path it was given exists, then serves /health.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let prev = std::env::current_dir().unwrap();
+        let bin = dir.path().join("bin").join(platform_dir()).join("cpu");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(dir.path().join("models")).unwrap();
+        std::fs::write(dir.path().join("models/m.gguf"), b"x").unwrap();
+        let script = r#"#!/bin/sh
+model=$2; port=$6
+[ -f "$model" ] || exit 7
+exec python3 -c "
+import http.server,sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(s): s.send_response(200); s.end_headers(); s.wfile.write(b'{}')
+    def log_message(*a): pass
+http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()" "$port"
+"#;
+        let exe = bin.join(binary_name());
+        std::fs::write(&exe, script).unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let cfg = ServerConfig {
+            model_path: "models/m.gguf".into(),
+            context: 1,
+            gpu_layers: 0,
+            startup_timeout: Duration::from_secs(20),
+            extra_args: vec![],
+        };
+        let result = Supervisor::start(Path::new("bin"), cfg);
+        std::env::set_current_dir(prev).unwrap();
+        let sup = result.expect("relative root and model path must work");
+        assert!(health_ok(sup.port));
     }
 
     #[test]

@@ -23,8 +23,13 @@ pub struct Root {
 }
 
 impl Root {
+    /// Paths are made absolute: llama-server runs with its own folder as the working
+    /// directory, so relative model and binary paths would resolve to the wrong place.
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        let dir: PathBuf = dir.into();
+        let dir =
+            std::fs::canonicalize(&dir).or_else(|_| std::env::current_dir().map(|cwd| cwd.join(&dir))).unwrap_or(dir);
+        Self { dir }
     }
     pub fn packages(&self) -> PathBuf {
         self.dir.join("packages")

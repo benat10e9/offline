@@ -390,12 +390,20 @@ fn main() -> Result<()> {
                 }
             }
             println!("\nfull report: {}", out.display());
+            if r.runs.iter().any(|run| !matches!(run.status, kb_server::ModelStatus::Ready { .. })) {
+                bail!("a model failed to start; see the report");
+            }
         }
         Cmd::Eval { root, questions, with_model, allow_unevaluated, out, strict } => {
             let engine = kb_server::Engine::open(kb_server::Root::new(&root))?;
             if with_model {
                 engine.start_model(&kb_server::EngineOptions { allow_unevaluated, ..Default::default() });
-                eprintln!("assistant: {:?}", engine.model_status());
+                let status = engine.model_status();
+                eprintln!("assistant: {status:?}");
+                // Never grade search results as if they were model answers.
+                if !matches!(status, kb_server::ModelStatus::Ready { .. }) {
+                    bail!("--with-model was given but the model is not running: {status:?}");
+                }
             }
             let items = kb_server::eval::load_items(&questions)?;
             let r = kb_server::eval::run(&engine, &items, with_model)?;

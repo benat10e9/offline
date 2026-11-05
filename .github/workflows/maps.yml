@@ -100,3 +100,11 @@ jobs:
             gh release create maps-dev --prerelease --title "Maps (development builds)" \
               --notes "Signed with the development key. Map data (c) OpenStreetMap contributors, ODbL. Not for distribution."
           gh release upload maps-dev "maps-$REGION.tar.gz" sizes-maps.txt --clobber
+      - name: Publish failure details
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo "run ${{ github.run_id }} failed"; df -h /; free -m; cat route-build.time 2>/dev/null | tail -60; } > maps-failure.txt
+          gh release view maps-dev >/dev/null 2>&1 || gh release create maps-dev --prerelease --title "Maps (development builds)" --notes "dev"
+          gh release upload maps-dev maps-failure.txt --clobber

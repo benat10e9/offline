@@ -145,7 +145,8 @@ pub fn car_speed(tags: &HashMap<String, String>) -> Option<f32> {
         let num: f32 = v.split_whitespace().next()?.parse().ok()?;
         Some(if v.contains("mph") { num * 1.609 } else { num })
     });
-    // Typical speed sits below the posted limit.
+    // Typical speed sits below the posted limit. Ignore implausible tags (OSM has "0" and typos).
+    let posted = posted.filter(|p| (5.0..=200.0).contains(p));
     Some(posted.map(|p| (p * 0.9).min(base * 1.3)).unwrap_or(base))
 }
 
@@ -233,7 +234,7 @@ pub fn build(ways: &[RoadWay], coords: &HashMap<i64, [f64; 2]>, out: &Path) -> R
                         dist += haversine_m(coords[&seg[k - 1]], c);
                     }
                 }
-                let time = dist / (w.speed_kmh as f64 / 3.6);
+                let time = dist / (w.speed_kmh.max(5.0) as f64 / 3.6);
                 let rec = |from, to, reversed| EdgeRec {
                     from,
                     to,
@@ -289,7 +290,10 @@ pub fn build(ways: &[RoadWay], coords: &HashMap<i64, [f64; 2]>, out: &Path) -> R
 
     let mut input = fast_paths::InputGraph::new();
     for e in &edges {
-        input.add_edge(e.from as usize, e.to as usize, ((e.time_s * 10.0).round() as usize).max(1));
+        // Deciseconds, bounded so shortcut sums stay far below 32-bit limits.
+        let w = (e.time_s as f64 * 10.0).round();
+        let w = if w.is_finite() { w.clamp(1.0, 1_000_000.0) as usize } else { 1_000_000 };
+        input.add_edge(e.from as usize, e.to as usize, w);
     }
     input.freeze();
     let fg = fast_paths::prepare(&input);
@@ -474,6 +478,11 @@ mod tests {
         assert_eq!(car_speed(&tags(&[("highway", "primary")])), Some(80.0));
         let s = car_speed(&tags(&[("highway", "primary"), ("maxspeed", "65 mph")])).unwrap();
         assert!((s - 65.0 * 1.609 * 0.9).abs() < 0.1);
+        assert_eq!(
+            car_speed(&tags(&[("highway", "primary"), ("maxspeed", "0")])),
+            Some(80.0),
+            "implausible tag ignored"
+        );
         assert_eq!(oneway(&tags(&[("highway", "motorway")])), 1);
         assert_eq!(oneway(&tags(&[("highway", "primary"), ("junction", "roundabout")])), 1);
         assert_eq!(oneway(&tags(&[("highway", "primary"), ("oneway", "-1")])), -1);

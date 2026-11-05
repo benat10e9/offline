@@ -87,7 +87,7 @@ jobs:
       - name: Smoke test search
         run: |
           mkdir -p drive/packages drive/trust
-          cp -R pkgs/$CAT drive/packages/
+          ln -s "$PWD/pkgs/$CAT" "drive/packages/$CAT"   # no second copy of a multi-GB package
           cp trust/dev-publisher.pub drive/trust/
           for q in "How do I stop severe bleeding?" "How long should I boil water to make it safe?" "What are signs of heat stroke?"; do
             target/release/kb search --pkg pkgs/$CAT --trust trust/dev-publisher.pub "$q" \
@@ -95,9 +95,19 @@ jobs:
               | sed "s|^|$q -> |" | tee -a smoke.txt | tee -a "$GITHUB_STEP_SUMMARY"
           done
       - name: Retrieval evaluation (release gate)
-        if: env.CAT == 'medical-survival'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -o pipefail; target/release/kb eval --strict --root drive --questions evals/medical-survival.jsonl --out eval-report.json | tee eval.txt
+          set -o pipefail
+          if [ "$CAT" != "medical-survival" ]; then
+            # Evaluate this package mounted together with the medical library, as customers run it.
+            gh release download content-dev --pattern "medical-survival.parts.txt" --output med.parts --clobber
+            : > med.tgz
+            while read -r p; do [ -n "$p" ] && gh release download content-dev --pattern "$p" --output part --clobber && cat part >> med.tgz; done < med.parts
+            tar xzf med.tgz -C drive/packages && rm -f med.tgz part
+          fi
+          ls drive/packages
+          target/release/kb eval --strict --root drive --questions evals/medical-survival.jsonl --out eval-report.json | tee eval.txt
           tail -1 eval.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Publish failure details
         if: failure()

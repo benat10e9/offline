@@ -1,0 +1,18 @@
+[package]
+name = "kb-inference"
+description = "Supervises llama-server as a separate process; hardware probe and model tiers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+ureq.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

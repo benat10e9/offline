@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+  "runtime/packages",
+  "runtime/retrieval",
+  "runtime/evidence",
+  "runtime/agent",
+  "runtime/inference",
+  "runtime/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[workspace.dependencies]
+kb-packages = { path = "runtime/packages" }
+kb-retrieval = { path = "runtime/retrieval" }
+kb-evidence = { path = "runtime/evidence" }
+kb-agent = { path = "runtime/agent" }
+kb-inference = { path = "runtime/inference" }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+ed25519-dalek = "2"
+getrandom = "0.2"
+walkdir = "2"
+tantivy = "0.27"
+clap = { version = "4", features = ["derive"] }
+ureq = { version = "2", features = ["json"] }
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+regex = "1"
+tempfile = "3"

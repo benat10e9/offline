@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.key
+/out
+/ssd
+.DS_Store
+node_modules/
+__pycache__/
+.venv/

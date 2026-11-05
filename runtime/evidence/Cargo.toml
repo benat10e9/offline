@@ -1,0 +1,13 @@
+[package]
+name = "kb-evidence"
+description = "Deterministic evidence classification: verified, partially supported, unsupported"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kb-packages.workspace = true
+kb-retrieval.workspace = true
+serde.workspace = true

@@ -1,0 +1,7 @@
+{
+  "id": "fixture-acme-demo",
+  "version": "0.1.0",
+  "title": "Fixture corpus (fictional) for runtime tests",
+  "editions": ["consumer", "police", "military", "ems"],
+  "depends_on": []
+}

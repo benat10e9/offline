@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "id": "EXAMPLE-small-instruct-q4",
+      "file": "EXAMPLE-small-instruct-q4.gguf",
+      "min_ram_gb": 16,
+      "context": 8192,
+      "license": "Apache-2.0",
+      "safety_approved": false
+    }
+  ]
+}

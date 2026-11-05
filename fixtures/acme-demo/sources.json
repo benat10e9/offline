@@ -1,0 +1,9 @@
+[
+  {"id": "acme-gx2000-revA", "title": "Acme GX-2000 Service Manual, Rev A (FICTIONAL)", "publisher": "Acme Power (fictional)", "license": "LicenseRef-Fixture-Internal", "authority": "official", "revision": "Rev A", "superseded_by": "acme-gx2000-revB", "applies_to": ["acme:gx-2000"], "jurisdictions": []},
+  {"id": "acme-gx2000-revB", "title": "Acme GX-2000 Service Manual, Rev B (FICTIONAL)", "publisher": "Acme Power (fictional)", "license": "LicenseRef-Fixture-Internal", "authority": "official", "revision": "Rev B", "applies_to": ["acme:gx-2000"], "jurisdictions": []},
+  {"id": "acme-gx3000", "title": "Acme GX-3000 Service Manual (FICTIONAL)", "publisher": "Acme Power (fictional)", "license": "LicenseRef-Fixture-Internal", "authority": "official", "revision": "Rev A", "applies_to": ["acme:gx-3000"], "jurisdictions": []},
+  {"id": "fsa-generator-safety", "title": "Portable Generator Safety (FICTIONAL agency)", "publisher": "Fixture Safety Agency (fictional)", "license": "LicenseRef-Fixture-Internal", "authority": "government", "applies_to": [], "jurisdictions": []},
+  {"id": "tx-burn-rules", "title": "Outdoor Burning Rules, Texas (FICTIONAL)", "publisher": "Fixture State Office (fictional)", "license": "LicenseRef-Fixture-Internal", "authority": "official", "applies_to": [], "jurisdictions": ["US-TX"]},
+  {"id": "ca-burn-rules", "title": "Outdoor Burning Rules, California (FICTIONAL)", "publisher": "Fixture State Office (fictional)", "license": "LicenseRef-Fixture-Internal", "authority": "official", "applies_to": [], "jurisdictions": ["US-CA"]},
+  {"id": "community-qa", "title": "Community Q&A (FICTIONAL)", "publisher": "Fixture Forum (fictional)", "license": "LicenseRef-Fixture-Internal", "authority": "community", "applies_to": [], "jurisdictions": []}
+]

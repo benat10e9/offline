@@ -9,10 +9,10 @@ on:
     inputs:
       questions:
         description: "Question file under evals/"
-        default: medical-survival.jsonl
+        default: medical-survival-quick.jsonl
       limit:
         description: "Number of questions (CPU runs of the 8B model take about 6 min each)"
-        default: "50"
+        default: "20"
 
 permissions:
   contents: write
@@ -67,8 +67,8 @@ jobs:
         timeout-minutes: 280
         run: |
           set -o pipefail
-          target/release/kb eval --root drive --questions "evals/${{ inputs.questions || 'medical-survival.jsonl' }}" \
-            --with-model --allow-unevaluated --limit "${{ inputs.limit || '50' }}" --out "eval-${{ matrix.model }}.json" | tee "eval-${{ matrix.model }}.txt"
+          target/release/kb eval --root drive --questions "evals/${{ inputs.questions || 'medical-survival-quick.jsonl' }}" \
+            --with-model --allow-unevaluated --limit "${{ inputs.limit || '20' }}" --out "eval-${{ matrix.model }}.json" | tee "eval-${{ matrix.model }}.txt"
       - name: Publish
         if: always()
         env:

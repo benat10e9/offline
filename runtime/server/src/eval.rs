@@ -223,6 +223,12 @@ mod tests {
         let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../evals/medical-survival.jsonl");
         let items = load_items(&p).unwrap();
         assert_eq!(items.len(), 50);
+        let quick = load_items(&p.with_file_name("medical-survival-quick.jsonl")).unwrap();
+        assert_eq!(quick.len(), 20);
+        for q in &quick {
+            let full = items.iter().find(|i| i.id == q.id).unwrap_or_else(|| panic!("{} not in full set", q.id));
+            assert_eq!((&full.question, &full.expect_class, &full.must_not), (&q.question, &q.expect_class, &q.must_not));
+        }
         for it in &items {
             for pat in &it.must_not {
                 regex::Regex::new(pat).unwrap_or_else(|e| panic!("{}: {e}", it.id));

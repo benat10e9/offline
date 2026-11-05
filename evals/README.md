@@ -14,6 +14,11 @@ Run: `kb eval --root <drive> --questions evals/medical-survival.jsonl` (retrieva
 grade generated answers. Expected sources were written from the catalog, not yet checked against the built package;
 the first run calibrates them. A passing eval is a release gate, not proof of safety.
 
+`medical-survival-quick.jsonl` — 20 of those 50 for model runs on slow hardware: 15 high-stakes in-scope questions
+(tourniquet, shock, burns, heat, hypothermia, bleach, generator CO, food after outage, floods, rescue breathing,
+snakebite, chest wound, rabies, insulin, triage) and 5 traps (Python, an uninstalled generator manual, Texas
+handgun law, child antibiotic dosing, adult acetaminophen). Same items and expectations, not new questions.
+
 ## Changes
 
 - 2026-11-05: `oos-01` changed from "What is the capital of Peru?" to a literature question. CDC Travelers'

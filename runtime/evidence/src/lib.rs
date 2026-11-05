@@ -256,22 +256,23 @@ pub fn content_terms(s: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// How much a word distinguishes one passage from another (rarer = higher).
+/// How much a word distinguishes one passage from another within the passage's own
+/// package (rarer = higher).
 pub trait TermWeights {
-    fn weight(&self, word: &str) -> f32;
+    fn weight(&self, package_id: &str, word: &str) -> f32;
 }
 
 /// Every word counts the same. For tests and callers without a library.
 pub struct Uniform;
 impl TermWeights for Uniform {
-    fn weight(&self, _word: &str) -> f32 {
+    fn weight(&self, _package_id: &str, _word: &str) -> f32 {
         1.0
     }
 }
 
 impl TermWeights for kb_retrieval::Library {
-    fn weight(&self, word: &str) -> f32 {
-        self.idf(word)
+    fn weight(&self, package_id: &str, word: &str) -> f32 {
+        self.idf_in(package_id, word)
     }
 }
 
@@ -292,7 +293,7 @@ pub fn relevance(question: &str, hit: &Hit, weights: &dyn TermWeights) -> f32 {
     let (mut total, mut covered) = (0.0f32, 0.0f32);
     let mut scored: Vec<(f32, bool)> = Vec::new();
     for (w, st) in &q {
-        let wt = weights.weight(w).max(0.01);
+        let wt = weights.weight(&hit.package_id, w).max(0.01);
         total += wt;
         let hit_here = h.contains(st);
         if hit_here {
@@ -573,7 +574,7 @@ mod tests {
 
         struct Rare;
         impl TermWeights for Rare {
-            fn weight(&self, w: &str) -> f32 {
+            fn weight(&self, _p: &str, w: &str) -> f32 {
                 if matches!(w, "python" | "comprehension") {
                     8.0
                 } else {

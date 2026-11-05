@@ -336,6 +336,20 @@ impl Library {
         (1.0 + (n as f32 - df as f32 + 0.5) / (df as f32 + 0.5)).ln()
     }
 
+    /// IDF of a word within one package: rarity relative to the collection a passage
+    /// comes from, so installing a large encyclopedia can't change which words count
+    /// as distinctive for the medical library.
+    pub fn idf_in(&self, package_id: &str, word: &str) -> f32 {
+        let Some((_, m)) = self.packages.iter().find(|(id, _)| id == package_id) else { return self.idf(word) };
+        let searcher = m.reader.searcher();
+        let n = searcher.num_docs();
+        if n == 0 {
+            return 1.0;
+        }
+        let df = searcher.doc_freq(&Term::from_field_text(m.fields.text, word)).unwrap_or(0);
+        (1.0 + (n as f32 - df as f32 + 0.5) / (df as f32 + 0.5)).ln()
+    }
+
     /// Passage counts per package, for diagnostics.
     pub fn stats(&self) -> HashMap<String, u64> {
         self.packages.iter().map(|(id, m)| (id.clone(), m.reader.searcher().num_docs())).collect()

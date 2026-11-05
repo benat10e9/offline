@@ -15,6 +15,6 @@ fn main() {
         );
     }
     for (w, st) in kb_evidence::content_terms(&a[2]) {
-        println!("term {w} stem {st} idf {:.2}", lib.idf(&w));
+        println!("term {w} stem {st} idf {:.2}", lib.idf_in("m", &w));
     }
 }

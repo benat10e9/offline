@@ -979,6 +979,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "fast_paths",
+ "flate2",
  "osmpbf",
  "serde",
  "serde_json",

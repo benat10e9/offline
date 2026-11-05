@@ -118,6 +118,15 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Load routing files and route between two lat,lon points (timing + sanity check).
+    Route {
+        #[arg(long)]
+        dir: PathBuf,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+    },
     /// Print this machine's model tier from a models.json catalog.
     Tier {
         #[arg(long)]
@@ -411,6 +420,27 @@ fn main() -> Result<()> {
             let meta = kb_routing::build_from_pbf(&pbf, &out)?;
             println!("{}", serde_json::to_string_pretty(&meta)?);
             println!("built in {:.0}s", t.elapsed().as_secs_f64());
+        }
+        Cmd::Route { dir, from, to } => {
+            let parse = |s: &str| -> Result<[f64; 2]> {
+                let (a, b) = s.split_once(',').context("use lat,lon")?;
+                Ok([a.trim().parse()?, b.trim().parse()?])
+            };
+            let t = std::time::Instant::now();
+            let r = kb_routing::Router::load(&dir)?;
+            let load = t.elapsed().as_secs_f64();
+            let t = std::time::Instant::now();
+            let route = r.route(parse(&from)?, parse(&to)?).context("no route found")?;
+            println!(
+                "load {:.1}s, query {:.0} ms: {:.1} mi, {:.0} min, {} points, snapped {:.0} m / {:.0} m",
+                load,
+                t.elapsed().as_secs_f64() * 1000.0,
+                route.distance_m / 1609.344,
+                route.duration_s / 60.0,
+                route.coordinates.len(),
+                route.snap_from_m,
+                route.snap_to_m
+            );
         }
         Cmd::Tier { catalog } => {
             let c = kb_inference::ModelCatalog::load(&catalog)?;

@@ -87,6 +87,10 @@ jobs:
             du -sh "pkgs/maps-$REGION" "pkgs/maps-$REGION/maps/$REGION.pmtiles" "pkgs/maps-$REGION/maps/gazetteer.jsonl" "pkgs/maps-$REGION/maps/assets" "pkgs/maps-$REGION/maps/routing"
             cat "pkgs/maps-$REGION/maps/routing/meta.json"
             grep -E "Maximum resident|Elapsed" route-build.time
+            echo "Austin -> Houston (expect ~165 mi, ~2h45m):"
+            /usr/bin/time -f "route peak RSS %M KB" target/release/kb route --dir "pkgs/maps-$REGION/maps/routing" --from 30.2672,-97.7431 --to 29.7604,-95.3698 2>&1
+            echo "Dallas -> El Paso (expect ~635 mi, ~9h):"
+            target/release/kb route --dir "pkgs/maps-$REGION/maps/routing" --from 32.7767,-96.7970 --to 31.7619,-106.4850
             ls -l "maps-$REGION.tar.gz"
             python3 -c "import json;m=json.load(open('pkgs/maps-$REGION/maps/map.json'));print('places:',m['places'],'maxzoom:',m['maxzoom'])"
           } | tee sizes-maps.txt | tee -a "$GITHUB_STEP_SUMMARY"

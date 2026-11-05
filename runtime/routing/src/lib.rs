@@ -15,10 +15,30 @@ use std::sync::Mutex;
 use thiserror::Error;
 
 pub const ROUTING_DIR: &str = "routing";
-const GRAPH: &str = "graph.bin";
-const NODES: &str = "nodes.bin";
-const EDGES: &str = "edges.bin";
-const GEOM: &str = "geom.bin";
+const GRAPH: &str = "graph.bin.gz";
+const NODES: &str = "nodes.bin.gz";
+const EDGES: &str = "edges.bin.gz";
+const GEOM: &str = "geom.bin.gz";
+
+/// The contraction-hierarchy graph stored with 32-bit fields (half the size of the default).
+#[derive(Serialize, Deserialize)]
+struct Graph32 {
+    #[serde(serialize_with = "fast_paths::serialize_32", deserialize_with = "fast_paths::deserialize_32")]
+    fg: fast_paths::FastGraph,
+}
+
+fn write_gz<T: Serialize>(path: &Path, value: &T) -> Result<(), RoutingError> {
+    let f = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut gz = flate2::write::GzEncoder::new(f, flate2::Compression::new(6));
+    bincode::serialize_into(&mut gz, value)?;
+    gz.finish()?;
+    Ok(())
+}
+
+fn read_gz<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, RoutingError> {
+    let f = std::io::BufReader::new(std::fs::File::open(path)?);
+    Ok(bincode::deserialize_from(flate2::read::GzDecoder::new(f))?)
+}
 const META: &str = "meta.json";
 /// Snapping grid cell, in degrees (about 1.1 km of latitude).
 const CELL: f64 = 0.01;
@@ -275,12 +295,12 @@ pub fn build(ways: &[RoadWay], coords: &HashMap<i64, [f64; 2]>, out: &Path) -> R
     let fg = fast_paths::prepare(&input);
 
     std::fs::create_dir_all(out)?;
-    std::fs::write(out.join(GRAPH), bincode::serialize(&fg)?)?;
-    std::fs::write(out.join(NODES), bincode::serialize(&nodes)?)?;
-    std::fs::write(out.join(EDGES), bincode::serialize(&edges)?)?;
-    std::fs::write(out.join(GEOM), bincode::serialize(&geom)?)?;
+    write_gz(&out.join(GRAPH), &Graph32 { fg })?;
+    write_gz(&out.join(NODES), &nodes)?;
+    write_gz(&out.join(EDGES), &edges)?;
+    write_gz(&out.join(GEOM), &geom)?;
     let meta = Meta {
-        format: 1,
+        format: 2,
         profile: "car".into(),
         nodes: nodes.len(),
         edges: edges.len(),
@@ -353,10 +373,10 @@ fn cell(lat: f64, lon: f64) -> (i32, i32) {
 
 impl Router {
     pub fn load(dir: &Path) -> Result<Self, RoutingError> {
-        let fg: fast_paths::FastGraph = bincode::deserialize(&std::fs::read(dir.join(GRAPH))?)?;
-        let nodes: Vec<[f32; 2]> = bincode::deserialize(&std::fs::read(dir.join(NODES))?)?;
-        let edges: Vec<EdgeRec> = bincode::deserialize(&std::fs::read(dir.join(EDGES))?)?;
-        let geom: Vec<[f32; 2]> = bincode::deserialize(&std::fs::read(dir.join(GEOM))?)?;
+        let fg = read_gz::<Graph32>(&dir.join(GRAPH))?.fg;
+        let nodes: Vec<[f32; 2]> = read_gz(&dir.join(NODES))?;
+        let edges: Vec<EdgeRec> = read_gz(&dir.join(EDGES))?;
+        let geom: Vec<[f32; 2]> = read_gz(&dir.join(GEOM))?;
         let meta: Meta = serde_json::from_slice(&std::fs::read(dir.join(META))?)?;
         let mut grid: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
         for (i, n) in nodes.iter().enumerate() {

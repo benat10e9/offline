@@ -23,6 +23,7 @@ jobs:
       matrix:
         include:
           - { os: macos-latest, name: macos-arm64 }
+          - { os: macos-latest, name: macos-x86_64, target: x86_64-apple-darwin }
           - { os: windows-latest, name: windows-x86_64 }
           - { os: ubuntu-22.04, name: linux-x86_64 }
     steps:
@@ -38,13 +39,27 @@ jobs:
           workspaces: |
             . -> target
             app/src-tauri -> target
+      - name: Cross-compile target
+        if: matrix.target
+        run: rustup target add ${{ matrix.target }}
       - name: Build kb
-        run: cargo build --release -p kb-cli
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release -p kb-cli --target ${{ matrix.target }}
+            mkdir -p target/release && cp target/${{ matrix.target }}/release/kb target/release/kb
+          else
+            cargo build --release -p kb-cli
+          fi
       - name: Build desktop app
         working-directory: app
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
+          if [ -n "${{ matrix.target }}" ]; then
+            npx --yes @tauri-apps/cli@2 build --ci --bundles app --target ${{ matrix.target }}
+            mkdir -p src-tauri/target/release/bundle/macos
+            cp -R "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Offline Library.app" src-tauri/target/release/bundle/macos/
+          elif [ "$RUNNER_OS" = "macOS" ]; then
             npx --yes @tauri-apps/cli@2 build --ci --bundles app
           else
             npx --yes @tauri-apps/cli@2 build --ci --no-bundle
@@ -56,6 +71,7 @@ jobs:
           cp -R "app/src-tauri/target/release/bundle/macos/Offline Library.app" out/
           cp target/release/kb out/
           codesign --verify --deep "out/Offline Library.app" && echo "ad-hoc signature ok"
+          lipo -archs "out/Offline Library.app/Contents/MacOS/"* out/kb
           (cd out && zip -qry "../offline-library-${{ matrix.name }}.zip" .)
       - name: Package (Windows)
         if: runner.os == 'Windows'

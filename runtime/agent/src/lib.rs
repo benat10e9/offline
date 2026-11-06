@@ -330,7 +330,7 @@ pub struct AskOptions {
 
 impl Default for AskOptions {
     fn default() -> Self {
-        Self { retrieve: 40, max_passages: 8 }
+        Self { retrieve: 40, max_passages: 5 }
     }
 }
 

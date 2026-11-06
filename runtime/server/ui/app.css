@@ -207,6 +207,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .evidence.verified { color: var(--verified); }
 .evidence.partial { color: var(--partial); }
 .evidence.unsupported { color: var(--unsupported); }
+.evidence.general { color: var(--link); }
 .evidence.pending { color: var(--ink-2); border-style: dashed; }
 .md p { margin: 0 0 10px; max-width: 70ch; }
 .md ol, .md ul { margin: 0 0 10px; padding-left: 24px; max-width: 70ch; }

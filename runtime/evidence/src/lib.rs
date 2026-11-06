@@ -13,6 +13,10 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceClass {
+    /// Conversational answer on a non-safety topic: the assistant's general knowledge,
+    /// citing library passages where it used them. Never used for medical, emergency,
+    /// legal, safety-hazard or equipment-specific questions.
+    General,
     /// No reliable answer can be established from the installed sources.
     Unsupported,
     /// Relevant material exists, but not the exact, current, applicable document.

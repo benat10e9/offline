@@ -90,7 +90,7 @@ async function refreshStatus() {
 }
 
 // ---------- chat ----------
-const LABEL_SHORT = { verified: "Verified source", partial: "Partly supported", unsupported: "Not in the library" };
+const LABEL_SHORT = { verified: "Verified source", partial: "Partly supported", unsupported: "Not in the library", general: "General knowledge" };
 let currentConv = null;
 let sending = false;
 
@@ -217,7 +217,7 @@ function scrollThread() { const t = $("thread"); t.scrollTop = t.scrollHeight; }
 function showWelcome() {
   $("thread").replaceChildren(el("div", { class: "welcome" },
     el("h2", {}, "What do you need to know?"),
-    el("p", {}, "Ask in plain words. Answers come from your offline library and show where they came from. Follow-up questions keep the context."),
+    el("p", {}, "Ask anything in plain words, and follow up naturally. Medical, emergency, safety and legal answers come only from your offline library and show their sources."),
     el("div", { class: "starters" }, ["How do I purify river water?", "How do I treat a burn?", "Can I run a generator in my garage?", "What are signs of heat stroke?"]
       .map((q) => el("button", { type: "button", on: { click: () => { $("question").value = q; send(); } } }, q)))));
 }

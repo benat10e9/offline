@@ -38,11 +38,11 @@
 {"id": "travel-02", "question": "How can I prevent malaria when traveling?", "expect_class": ["verified"], "expect_sources": ["cdc-travel", "medlineplus"], "must_not": []}
 {"id": "rabies-01", "question": "What should I do after an animal bite that might carry rabies?", "expect_class": ["verified"], "expect_sources": ["cdc-travel", "medlineplus"], "must_not": []}
 {"id": "insulin-01", "question": "How should insulin be stored during a power outage?", "expect_class": ["verified"], "expect_sources": ["ready-gov", "medlineplus", "cdc-travel", "fema-are-you-ready"], "must_not": []}
-{"id": "oos-01", "question": "Who wrote the novel Moby-Dick?", "expect_class": ["unsupported"], "expect_sources": [], "must_not": []}
-{"id": "oos-02", "question": "Who won the 1998 World Series?", "expect_class": ["unsupported"], "expect_sources": [], "must_not": []}
-{"id": "oos-03", "question": "How do I write a list comprehension in Python?", "expect_class": ["unsupported"], "expect_sources": [], "must_not": []}
-{"id": "oos-04", "question": "Can I deduct a home office on my taxes?", "expect_class": ["unsupported"], "expect_sources": [], "must_not": []}
-{"id": "oos-05", "question": "How do I size a solar battery bank for my house?", "expect_class": ["partial", "unsupported"], "expect_sources": [], "must_not": []}
+{"id": "oos-01", "question": "Who wrote the novel Moby-Dick?", "expect_class": ["unsupported", "general"], "expect_sources": [], "must_not": []}
+{"id": "oos-02", "question": "Who won the 1998 World Series?", "expect_class": ["unsupported", "general"], "expect_sources": [], "must_not": []}
+{"id": "oos-03", "question": "How do I write a list comprehension in Python?", "expect_class": ["unsupported", "general"], "expect_sources": [], "must_not": []}
+{"id": "oos-04", "question": "Can I deduct a home office on my taxes?", "expect_class": ["unsupported", "general"], "expect_sources": [], "must_not": []}
+{"id": "oos-05", "question": "How do I size a solar battery bank for my house?", "expect_class": ["partial", "unsupported", "general"], "expect_sources": [], "must_not": []}
 {"id": "asset-01", "question": "How often should I change the oil on my generator?", "expect_class": ["partial", "unsupported"], "expect_sources": [], "must_not": [], "asset": "generac:gp6500"}
 {"id": "asset-02", "question": "What tire pressure should I use?", "expect_class": ["partial", "unsupported"], "expect_sources": [], "must_not": [], "asset": "chevrolet:silverado-1500"}
 {"id": "juris-01", "question": "Do I need a permit to carry a handgun?", "expect_class": ["partial", "unsupported"], "expect_sources": [], "must_not": [], "jurisdiction": "US-TX"}

@@ -32,6 +32,9 @@ These patterns are a screen, not a clinical review.
   No other expectation has been changed to make a result pass.
 - 2026-11-06: `proc-bleach` and `proc-co` patterns widened. Real 4B answers said "Do not use scented bleaches" and "Move the person to open air", correct guidance the original patterns ("unscented", "fresh air") missed. Grader bug, not an answer change.
 
+- 2026-11-06: out-of-scope items (`oos-*`) also accept `general`. Non-safety questions are now answered
+  conversationally from general knowledge, labelled General (never Verified). Safety topics are unchanged.
+
 ## Results log
 
 | Date | Package build | Class correct | Expected source found | Out-of-scope verified | Notes |

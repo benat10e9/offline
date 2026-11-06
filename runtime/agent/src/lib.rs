@@ -168,6 +168,41 @@ professional and tell the user to get medical help; do not present those steps a
 (7) When the passages describe a procedure, give every step, in order, as a numbered list (1., 2., 3.), with \
 its warnings. Never stop partway through a procedure.";
 
+/// Questions that must stay in strict, cited mode: health and injury, medicines, drinking
+/// water and food safety, fuel/electrical/gas hazards, law and permits. Everything else may
+/// be answered conversationally from the model's general knowledge (labelled as such).
+pub fn needs_strict_mode(question: &str, ctx: &QuestionContext) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(concat!(
+            r"(?i)\b(",
+            // health, injury, medicine
+            r"symptom|sick|ill(ness)?|disease|infect|fever|pain|ache|injur|wound|cut|bleed|blood|bruise|fractur|broken bone|sprain|",
+            r"burn|blister|bite|sting|rash|allerg|asthma|breath|chok|heart|chest|stroke|seizure|faint|unconscious|dizz|vomit|diarrh|",
+            r"dehydrat|pregnan|baby|infant|newborn|medic|drug|pill|dose|dosage|mg|antibiotic|insulin|diabet|vaccin|prescri|overdose|",
+            r"poison|toxic|first aid|cpr|treat|diagnos|doctor|nurse|hospital|clinic|emergency|911|mental health|suicid|",
+            // water and food safety
+            r"drink(ing)? water|potable|purif|disinfect|boil(ing)? water|bleach|chlorine|well water|spoil|food safety|refrigerat|thaw|canning|botulism|mold|",
+            // fuel, electrical, gas hazards
+            r"generator|carbon monoxide|co detector|propane|natural gas|gas leak|gasoline|fuel|wiring|electrical|electrocut|voltage|breaker|outlet|",
+            // law
+            r"law|legal|illegal|permit|license|statute|regulation|ordinance|gun|firearm|weapon|carry|arrest|police",
+            r")"
+        ))
+        .expect("valid regex")
+    });
+    ctx.asset.is_some() || re.is_match(question) || emergency_topic(question).is_some()
+}
+
+pub const GENERAL_SYSTEM_PROMPT: &str = "You are a friendly, knowledgeable assistant that runs entirely offline on the \
+user's computer. Talk naturally, like a helpful expert: answer directly, explain clearly, and use Markdown (short \
+paragraphs, numbered steps, bullet lists) when it helps. Keep answers focused; offer to go deeper rather than writing \
+everything at once. If the question is ambiguous, ask one short clarifying question. Some numbered source passages from \
+the user's offline library may be provided: when you state something taken from a passage, put its marker after it, \
+like [S1]. Never invent markers. You may also use your own general knowledge without a marker. If the conversation \
+turns to injuries, illness, medicines, drinking water safety, fuel or electrical hazards, or the law, tell the user to \
+ask that as its own question so the library's verified sources are used.";
+
 /// Emergency topics: procedures are shown word for word from the source, never paraphrased
 /// by the model. A 4B model inverted tourniquet placement ("distal to the injury") while
 /// citing a real passage; citations cannot catch an inversion. (topic, pattern, call 911)
@@ -388,6 +423,59 @@ pub fn max_step(text: &str) -> u32 {
         .filter(|n| *n <= 30)
         .max()
         .unwrap_or(0)
+}
+
+/// Conversational answer: library passages offered (cited if used), general knowledge allowed.
+fn general_answer(
+    question: &str,
+    model: &dyn ChatModel,
+    turn: &Turn,
+    assessment: Assessment,
+    mut notes: Vec<String>,
+    on_token: &mut dyn FnMut(&str),
+) -> Result<Answer, AgentError> {
+    let mut prompt = build_context(turn);
+    // Only passages that passed the relevance check, and fewer of them: faster first words.
+    let shown: Vec<Hit> = assessment.citable.iter().take(4).cloned().collect();
+    if !shown.is_empty() {
+        prompt.push_str("Passages from the user's offline library that may help:\n");
+        for (i, h) in shown.iter().enumerate() {
+            prompt.push_str(&format!("[S{}] {}\n{}\n\n", i + 1, h.title, h.text.trim()));
+        }
+    }
+    prompt.push_str("User: ");
+    prompt.push_str(question);
+    let raw = model.chat_stream(GENERAL_SYSTEM_PROMPT, &prompt, on_token)?;
+    let v = verify_citations(&raw, &shown);
+    if v.text.split_whitespace().count() < 2 {
+        notes.push("The assistant did not produce an answer. Try rephrasing.".into());
+        return Ok(Answer {
+            question: question.into(),
+            class: EvidenceClass::Unsupported,
+            text: None,
+            citations: vec![],
+            consulted: shown,
+            notes,
+            assessment,
+            verification: Some(v),
+        });
+    }
+    notes.retain(|n| !n.starts_with("The installed library does not contain"));
+    notes.push(if v.citations.is_empty() {
+        "General knowledge from the assistant, not from your library. Double-check anything important.".into()
+    } else {
+        "Partly from your library (numbered sources) and partly the assistant's general knowledge.".into()
+    });
+    Ok(Answer {
+        question: question.into(),
+        class: EvidenceClass::General,
+        text: Some(v.text.clone()),
+        citations: v.citations.clone(),
+        consulted: shown,
+        notes,
+        assessment,
+        verification: Some(v),
+    })
 }
 
 /// Lowest step number in a text, 0 if none.
@@ -697,11 +785,13 @@ pub struct AskOptions {
     pub max_passages: usize,
     /// Show emergency procedures verbatim instead of asking the model (default on).
     pub extractive_emergencies: bool,
+    /// Answer non-safety questions conversationally from general knowledge (default on).
+    pub general_mode: bool,
 }
 
 impl Default for AskOptions {
     fn default() -> Self {
-        Self { retrieve: 40, max_passages: 8, extractive_emergencies: true }
+        Self { retrieve: 40, max_passages: 8, extractive_emergencies: true, general_mode: true }
     }
 }
 
@@ -772,6 +862,15 @@ pub fn ask_with(
         notes.push("Some sources here are written for health professionals. Steps that need trained care are not things to attempt yourself; get medical help.".into());
     }
 
+    // Emergencies: official text verbatim, no model (instant, and nothing can be inverted).
+    let topic_q = turn.topic_text.as_deref().map(|t| format!("{t} {question}")).unwrap_or_else(|| question.to_string());
+    if let Some((topic, call_911)) = emergency_topic(&topic_q).filter(|_| opts.extractive_emergencies) {
+        return Ok(emergency_answer(library, sources, question, &topic_q, topic, call_911, assessment, notes));
+    }
+    // Non-safety topics: conversational, general knowledge allowed, labelled as such.
+    if opts.general_mode && !needs_strict_mode(&topic_q, ctx) {
+        return general_answer(question, model, turn, assessment, notes, on_token);
+    }
     if assessment.class == EvidenceClass::Unsupported {
         return Ok(Answer {
             question: question.into(),
@@ -785,11 +884,6 @@ pub fn ask_with(
         });
     }
 
-    // Emergencies: official text verbatim, no model (instant, and nothing can be inverted).
-    let topic_q = turn.topic_text.as_deref().map(|t| format!("{t} {question}")).unwrap_or_else(|| question.to_string());
-    if let Some((topic, call_911)) = emergency_topic(&topic_q).filter(|_| opts.extractive_emergencies) {
-        return Ok(emergency_answer(library, sources, question, &topic_q, topic, call_911, assessment, notes));
-    }
     let prompt = build_context(turn) + &build_prompt(question, &assessment, sources);
     let raw = model.chat_stream(SYSTEM_PROMPT, &prompt, on_token)?;
     let v = verify_citations(&raw, &assessment.citable);
@@ -1279,6 +1373,76 @@ mod tests {
     }
 
     #[test]
+    fn strict_and_general_topics() {
+        let none = QuestionContext::default();
+        for q in [
+            "How do I treat a burn?",
+            "What dose of ibuprofen?",
+            "How do I purify river water?",
+            "Can I run a generator in my garage?",
+            "Do I need a permit to carry a handgun?",
+            "My kid has a fever",
+            "Is this food spoiled?",
+            "How do I wire an outlet?",
+        ] {
+            assert!(needs_strict_mode(q, &none), "{q}");
+        }
+        for q in [
+            "hi",
+            "thanks!",
+            "How does a well pump work?",
+            "Help me plan a vegetable garden",
+            "Explain photosynthesis to my kid",
+            "What's a good way to organize a pantry?",
+            "How do I write a list comprehension in Python?",
+        ] {
+            assert!(!needs_strict_mode(q, &none), "{q}");
+        }
+        let asset = QuestionContext { asset: Some("generac:gp6500".into()), jurisdiction: None };
+        assert!(
+            needs_strict_mode("How often do I change the oil?", &asset),
+            "equipment-specific questions stay strict"
+        );
+    }
+
+    #[test]
+    fn general_mode_answers_conversationally() {
+        struct Chatty;
+        impl ChatModel for Chatty {
+            fn chat(&self, s: &str, _u: &str) -> Result<String, AgentError> {
+                assert!(s.contains("runs entirely offline"), "general prompt used");
+                Ok("Hi! I can help with gardening, repairs, school topics and more. What are you working on? [S9]"
+                    .into())
+            }
+        }
+        let (_d, lib, src) = setup();
+        let a = ask(&lib, &src, &Chatty, "hi", &QuestionContext::default(), &AskOptions::default()).unwrap();
+        assert_eq!(a.class, EvidenceClass::General);
+        let text = a.text.unwrap();
+        assert!(text.starts_with("Hi!") && !text.contains("[S9]"), "invented markers removed: {text}");
+        assert!(a.notes.iter().any(|n| n.contains("General knowledge")));
+
+        // Safety topics never go to general mode, even with general mode on.
+        struct Strict;
+        impl ChatModel for Strict {
+            fn chat(&self, s: &str, _u: &str) -> Result<String, AgentError> {
+                assert!(s.contains("ONLY the numbered source passages"), "strict prompt for a hazard question");
+                Ok("Never run a generator in a garage; carbon monoxide can kill [S1].".into())
+            }
+        }
+        let a = ask(
+            &lib,
+            &src,
+            &Strict,
+            "Can I run my generator in the garage?",
+            &QuestionContext::default(),
+            &AskOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(a.class, EvidenceClass::Verified);
+    }
+
+    #[test]
     fn step_counting() {
         assert_eq!(max_step("Step 1: x. Step 2: y."), 2);
         assert_eq!(max_step("1. a\n2. b\n3. c"), 3);
@@ -1299,7 +1463,7 @@ mod tests {
             &lib,
             &src,
             &Panics,
-            "What is the airspeed of a swallow?",
+            "What dose of amoxicillin should a toddler take?",
             &QuestionContext::default(),
             &AskOptions::default(),
         )

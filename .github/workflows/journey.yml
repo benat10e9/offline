@@ -1,0 +1,87 @@
+name: journey
+
+# The acceptance test, automated: store -> configure -> (simulated) payment -> signed profile
+# -> drive built from that profile -> network removed -> real model answers, search and
+# directions -> configuration change -> drive updated from profile v2 -> verified.
+# Stripe itself is not exercised until test keys are configured.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["commerce/**", "scripts/build-drive.sh", ".github/workflows/journey.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Build kb
+        run: cargo build --release -p kb-cli
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Store unit tests and build
+        working-directory: commerce
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npx next build
+      - name: Start the store (test mode, simulated payments)
+        working-directory: commerce
+        env:
+          KB_PROFILE_SIGNING_KEY: ${{ secrets.KB_DEV_SIGNING_KEY }}
+        run: |
+          export SESSION_SECRET=$(openssl rand -hex 32) ADMIN_TOKEN=$(openssl rand -hex 16)
+          echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> "$GITHUB_ENV"
+          ALLOW_SIMULATED_PAYMENTS=1 INSECURE_COOKIES=1 STORE_DIR=$RUNNER_TEMP/store nohup npx next start -p 3000 > store.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:3000/ >/dev/null && break; sleep 1; done
+      - name: Customer journey through the store
+        working-directory: commerce
+        run: |
+          OUT_DIR=$GITHUB_WORKSPACE/profiles UPDATE_STATE=CA \
+          CONFIG='{"edition":"standard","os":["linux"],"model":"qwen3-4b-q4km","state":"TX"}' \
+          node scripts/e2e.mjs | tee $GITHUB_WORKSPACE/journey.txt
+      - name: Build the drive from signed profile v1
+        run: |
+          set -o pipefail
+          scripts/build-drive.sh profiles/v1 drive --kb target/release/kb 2>&1 | tail -40 | tee -a journey.txt
+          du -sh drive/* | tee -a journey.txt
+      - name: Offline - no network at all
+        run: |
+          set -o pipefail
+          cat > offline.sh <<'SH'
+          set -e
+          ip link set lo up
+          if curl -s -m 5 https://github.com >/dev/null 2>&1; then echo "NETWORK STILL REACHABLE"; exit 1; fi
+          echo "confirmed: no network in this namespace"
+          K=target/release/kb
+          $K verify-drive --root drive | tail -3
+          $K search --pkg drive/packages/medical-survival --trust drive/trust/dev-publisher.pub "How do I treat a burn?" \
+            | python3 -c "import sys,json;a=json.load(sys.stdin);print('search:', a['class'], [h['title'] for h in a['citable'][:3]])"
+          $K route --dir drive/packages/maps-texas/maps/routing --from 30.2672,-97.7431 --to 29.7604,-95.3698
+          $K eval --root drive --questions evals/medical-survival-quick.jsonl --with-model --allow-unevaluated --limit 4 --out offline-eval.json
+          SH
+          sudo unshare --net -- bash offline.sh 2>&1 | tee -a journey.txt
+      - name: Configuration update - rebuild the same drive from profile v2
+        run: |
+          set -o pipefail
+          scripts/build-drive.sh profiles/v2 drive --kb target/release/kb 2>&1 | tail -25 | tee -a journey.txt
+          test ! -d drive/packages/maps-texas && echo "maps-texas removed after the customer moved to CA" | tee -a journey.txt
+          grep -q '"version": 2' drive/profile.json && echo "drive carries profile v2" | tee -a journey.txt
+      - name: Publish journey report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view journey-dev >/dev/null 2>&1 || gh release create journey-dev --prerelease --title "Acceptance journey (development)" --notes "Automated store-to-offline journey."
+          [ -f commerce/store.log ] && tail -100 commerce/store.log > store-log.txt || true
+          for f in journey.txt offline-eval.json store-log.txt; do [ -f "$f" ] && gh release upload journey-dev "$f" --clobber; done
+          true

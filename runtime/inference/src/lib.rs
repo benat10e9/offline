@@ -99,6 +99,15 @@ pub fn backend_preference() -> Vec<&'static str> {
     }
 }
 
+/// Server binary name for a target OS ("windows", "macos", "linux").
+pub fn binary_name_for(os: &str) -> &'static str {
+    if os == "windows" {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    }
+}
+
 pub fn binary_name() -> &'static str {
     if cfg!(windows) {
         "llama-server.exe"

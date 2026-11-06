@@ -216,6 +216,47 @@ function closeReader() {
   document.querySelector(".shell").classList.remove("reading");
 }
 
+// ---------- library ----------
+let libraryRendered = false;
+async function renderLibrary() {
+  if (libraryRendered) return;
+  const pkgs = await (await fetch("/api/library")).json();
+  const list = $("library-list");
+  for (const p of pkgs) {
+    const rows = p.sources.map((s) => el("tr", {},
+      el("td", {}, s.title, s.audience === "clinician" ? el("div", { class: "hint" }, "Written for health professionals") : null),
+      el("td", {}, s.publisher),
+      el("td", {}, s.revision || ""),
+      el("td", {}, s.authority),
+      el("td", {}, s.license)));
+    list.append(el("section", { class: "lib-pkg" },
+      el("h3", {}, `${p.title} (${p.version})`),
+      rows.length ? el("div", { class: "lib-wrap" }, el("table", { class: "lib-table" },
+        el("thead", {}, el("tr", {}, ["Source", "Publisher", "Revision", "Authority", "License"].map((h) => el("th", {}, h)))),
+        el("tbody", {}, rows))) : el("p", { class: "hint" }, "Map data")));
+  }
+  libraryRendered = true;
+}
+
+// ---------- profile ----------
+async function applyProfile() {
+  const p = await (await fetch("/api/profile")).json();
+  if (!p) return;
+  if (p.jurisdiction && !store("jurisdiction")) { $("jurisdiction").value = p.jurisdiction; summarizeContext(); }
+  if (p.assets && p.assets.length) {
+    const sel = $("my-equipment");
+    p.assets.forEach((a, i) => sel.append(el("option", { value: String(i) }, `${a.label}: ${a.make} ${a.model}`)));
+    $("my-equipment-label").hidden = false;
+    sel.addEventListener("change", () => {
+      const a = p.assets[Number(sel.value)];
+      $("asset-make").value = a ? a.make : "";
+      $("asset-model").value = a ? a.model : "";
+      for (const id of ["asset-make", "asset-model"]) store(id, $(id).value);
+      summarizeContext();
+    });
+  }
+}
+
 // ---------- map ----------
 let mapState = null;
 
@@ -231,9 +272,10 @@ function loadScript(src) {
 async function showView(view) {
   const map = view === "map";
   $("mapview").hidden = !map;
-  $("askview").hidden = map;
-  $("tab-ask").setAttribute("aria-pressed", String(!map));
-  $("tab-map").setAttribute("aria-pressed", String(map));
+  $("askview").hidden = view !== "ask";
+  $("libraryview").hidden = view !== "library";
+  for (const v of ["ask", "map", "library"]) $(`tab-${v}`).setAttribute("aria-pressed", String(view === v));
+  if (view === "library") await renderLibrary();
   if (map) {
     if (!mapState) await initMap();
     else mapState.map.resize();
@@ -367,11 +409,13 @@ function goToPlace(p) {
 
 document.addEventListener("DOMContentLoaded", () => {
   $("tab-ask").addEventListener("click", () => showView("ask"));
+  $("tab-library").addEventListener("click", () => showView("library"));
   $("tab-map").addEventListener("click", () => showView("map").catch((e) => { $("map-note").textContent = String(e.message || e); }));
   $("place-q").addEventListener("input", searchPlaces);
   $("dir-clear").addEventListener("click", clearDirections);
   setupContext();
   refreshStatus();
+  applyProfile();
   $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); submit("ask"); });
   $("search-btn").addEventListener("click", () => submit("search"));
   $("question").addEventListener("keydown", (e) => {

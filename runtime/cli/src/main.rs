@@ -130,6 +130,21 @@ enum Cmd {
         #[arg(long)]
         to: String,
     },
+    /// Sign a customer drive profile (profile.json) into <out>/profile.json + profile.sig.
+    ProfileSign {
+        #[arg(long)]
+        profile: PathBuf,
+        #[arg(long)]
+        key: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Check a finished drive: packages (full hash), profile signature, model checksums,
+    /// runtimes for every OS in the profile. Exit 0 only if everything is intact.
+    VerifyDrive {
+        #[arg(long)]
+        root: PathBuf,
+    },
     /// Print this machine's model tier from a models.json catalog.
     Tier {
         #[arg(long)]
@@ -192,6 +207,92 @@ fn ctx(args: &LibArgs) -> QuestionContext {
 fn copy_file(from: &Path, to: &Path) -> Result<()> {
     std::fs::copy(from, to).with_context(|| format!("copying {} to {}", from.display(), to.display()))?;
     Ok(())
+}
+
+fn verify_drive(root: &Path) -> Result<serde_json::Value> {
+    let mut problems: Vec<String> = Vec::new();
+    let mut ok: Vec<String> = Vec::new();
+    let keys: Vec<_> = std::fs::read_dir(root.join("trust"))
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "pub"))
+                .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+                .filter_map(|s| parse_public_key(&s).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    if keys.is_empty() {
+        problems.push("no trusted keys in trust/".into());
+    }
+    let profile = match kb_packages::read_profile(root, &keys) {
+        Ok(p) => {
+            ok.push(format!("profile {} v{}", p.profile_id, p.version));
+            Some(p)
+        }
+        Err(e) => {
+            problems.push(format!("profile: {e}"));
+            None
+        }
+    };
+    let mut installed = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(root.join("packages")) {
+        for e in rd.flatten().filter(|e| e.path().is_dir()) {
+            match verify_package(&e.path(), &keys, VerifyMode::Full) {
+                Ok(m) => {
+                    ok.push(format!("package {}@{}", m.id, m.version));
+                    installed.push(m.id);
+                }
+                Err(err) => problems.push(format!("package {}: {err}", e.path().display())),
+            }
+        }
+    }
+    if let Some(p) = &profile {
+        for want in &p.packages {
+            if !installed.contains(want) {
+                problems.push(format!("profile lists package {want}, which is not installed"));
+            }
+        }
+        for os in &p.os {
+            let plat = match os.as_str() {
+                "macos" => vec!["macos-aarch64", "macos-x86_64"],
+                "windows" => vec!["windows-x86_64"],
+                _ => vec!["linux-x86_64"],
+            };
+            let has = plat.iter().any(|d| {
+                std::fs::read_dir(root.join("bin").join(d))
+                    .map(|rd| rd.flatten().any(|b| b.path().join(kb_inference::binary_name_for(os)).is_file()))
+                    .unwrap_or(false)
+            });
+            if has {
+                ok.push(format!("runtime for {os}"));
+            } else {
+                problems.push(format!("no llama-server runtime for {os}"));
+            }
+        }
+    }
+    match kb_inference::ModelCatalog::load(&root.join("models").join("models.json")) {
+        Ok(cat) => {
+            for m in &cat.models {
+                let path = root.join("models").join(&m.file);
+                match (path.is_file(), &m.sha256) {
+                    (false, _) => problems.push(format!("model file missing: {}", m.file)),
+                    (true, Some(want)) => match kb_packages::sha256_file(&path) {
+                        Ok((got, _)) if &got == want => ok.push(format!("model {} checksum", m.id)),
+                        Ok(_) => problems.push(format!("model {} checksum mismatch", m.id)),
+                        Err(e) => problems.push(format!("model {}: {e}", m.id)),
+                    },
+                    (true, None) => problems.push(format!("model {} has no recorded checksum", m.id)),
+                }
+            }
+            if let Some(p) = &profile {
+                if !cat.models.iter().any(|m| m.id == p.model) {
+                    problems.push(format!("profile model {} not in models.json", p.model));
+                }
+            }
+        }
+        Err(_) => problems.push("models/models.json missing or invalid".into()),
+    }
+    Ok(serde_json::json!({ "ok": ok, "problems": problems }))
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
@@ -470,6 +571,29 @@ fn main() -> Result<()> {
                 route.snap_from_m,
                 route.snap_to_m
             );
+        }
+        Cmd::ProfileSign { profile, key, out } => {
+            let p: kb_packages::DriveProfile =
+                serde_json::from_slice(&std::fs::read(&profile)?).context("profile is not a valid drive profile")?;
+            let bytes = serde_json::to_vec_pretty(&p)?;
+            let k = KeyPair::from_secret_hex(&std::fs::read_to_string(&key)?)?;
+            std::fs::create_dir_all(&out)?;
+            std::fs::write(out.join(kb_packages::PROFILE_FILE), &bytes)?;
+            std::fs::write(out.join(kb_packages::PROFILE_SIG), kb_packages::signature_line(&bytes, &k))?;
+            println!(
+                "signed profile {} v{} ({} packages, model {})",
+                p.profile_id,
+                p.version,
+                p.packages.len(),
+                p.model
+            );
+        }
+        Cmd::VerifyDrive { root } => {
+            let report = verify_drive(&root)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if !report["problems"].as_array().is_none_or(|a| a.is_empty()) {
+                std::process::exit(2);
+            }
         }
         Cmd::Tier { catalog } => {
             let c = kb_inference::ModelCatalog::load(&catalog)?;

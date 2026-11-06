@@ -123,7 +123,19 @@ pub struct Engine {
     pub problems: Vec<PackageProblem>,
     pub maps: Vec<MapInfo>,
     pub places: Vec<Place>,
+    /// The customer's signed drive profile, if present and valid.
+    pub profile: Option<kb_packages::DriveProfile>,
+    /// Package manifests' source lists, for the Library view.
+    pub library_info: Vec<LibraryPackage>,
     model: Mutex<ModelSlot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LibraryPackage {
+    pub id: String,
+    pub version: String,
+    pub title: String,
+    pub sources: Vec<SourceRecord>,
 }
 
 /// A map in a package: `maps/map.json` plus the files beside it.
@@ -228,6 +240,7 @@ impl Engine {
         dirs.sort();
         let mut maps = Vec::new();
         let mut places = Vec::new();
+        let mut library_info = Vec::new();
         for dir in dirs {
             let result =
                 verify_package(&dir, &keys, VerifyMode::SignatureOnly).map_err(anyhow::Error::from).and_then(|m| {
@@ -238,6 +251,12 @@ impl Engine {
                 });
             match result {
                 Ok(m) => {
+                    library_info.push(LibraryPackage {
+                        id: m.id.clone(),
+                        version: m.version.clone(),
+                        title: m.title.clone(),
+                        sources: m.sources.clone(),
+                    });
                     let map_json = dir.join("maps").join("map.json");
                     if let Ok(bytes) = std::fs::read(&map_json) {
                         if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&bytes) {
@@ -260,6 +279,18 @@ impl Engine {
                 Err(e) => problems.push(PackageProblem { path: dir.display().to_string(), error: e.to_string() }),
             }
         }
+        // A profile that fails verification is ignored (and reported), never half-trusted.
+        let profile = if root.dir.join(kb_packages::PROFILE_FILE).exists() {
+            match kb_packages::read_profile(&root.dir, &keys) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    problems.push(PackageProblem { path: kb_packages::PROFILE_FILE.into(), error: e.to_string() });
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let stats = library.stats();
         for p in &mut packages {
             p.passages = stats.get(&p.id).copied().unwrap_or(0);
@@ -272,6 +303,8 @@ impl Engine {
             problems,
             maps,
             places,
+            profile,
+            library_info,
             model: Mutex::new(ModelSlot::Status(ModelStatus::SearchOnly { reason: "Model not started".into() })),
         })
     }
@@ -792,6 +825,8 @@ fn handle(engine: &Engine, mut req: tiny_http::Request) {
             }
         }
         (tiny_http::Method::Get, "/api/maps") => json(req, 200, &engine.maps),
+        (tiny_http::Method::Get, "/api/profile") => json(req, 200, &engine.profile),
+        (tiny_http::Method::Get, "/api/library") => json(req, 200, &engine.library_info),
         (tiny_http::Method::Get, "/api/route") => {
             let point = |k: &str| -> Option<[f64; 2]> {
                 let v = query_param(&url, k)?;

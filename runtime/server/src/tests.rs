@@ -250,3 +250,43 @@ fn map_packages_places_and_ranges() {
     assert!(js.header("Content-Type").unwrap().starts_with("text/javascript"));
     r.stop();
 }
+
+#[test]
+fn signed_profile_is_loaded_and_tampered_profile_ignored() {
+    let root = make_root();
+    let key = KeyPair::generate().unwrap();
+    std::fs::write(root.path().join("trust/store.pub"), key.public_hex()).unwrap();
+    let profile = kb_packages::DriveProfile {
+        format: 1,
+        profile_id: "p1".into(),
+        version: 1,
+        order_id: None,
+        edition: "essential".into(),
+        os: vec!["macos".into()],
+        model: "qwen3-4b-q4km".into(),
+        packages: vec!["fixture-acme-demo".into()],
+        jurisdiction: Some("US-TX".into()),
+        assets: vec![kb_packages::ProfileAsset {
+            label: "Shop generator".into(),
+            make: "Acme".into(),
+            model: "GX-2000".into(),
+            year: None,
+        }],
+        requests: vec![],
+    };
+    let bytes = serde_json::to_vec_pretty(&profile).unwrap();
+    std::fs::write(root.path().join("profile.json"), &bytes).unwrap();
+    std::fs::write(root.path().join("profile.sig"), kb_packages::signature_line(&bytes, &key)).unwrap();
+    let (engine, r) = start(root.path());
+    assert_eq!(engine.profile.as_ref().unwrap().assets[0].key(), "acme:gx-2000");
+    let base = r.url.trim_end_matches('/').to_string();
+    assert_eq!(get(&format!("{base}/api/profile"))["jurisdiction"], "US-TX");
+    let lib = get(&format!("{base}/api/library"));
+    assert_eq!(lib[0]["sources"].as_array().unwrap().len(), 7);
+
+    std::fs::write(root.path().join("profile.json"), String::from_utf8(bytes).unwrap().replace("US-TX", "US-CA"))
+        .unwrap();
+    let engine = Engine::open(Root::new(root.path())).unwrap();
+    assert!(engine.profile.is_none());
+    assert!(engine.problems.iter().any(|p| p.path == "profile.json"));
+}

@@ -63,6 +63,14 @@ Last updated: 2026-11-05 (session 3, part 2)
 - Real answers exposed content problems no citation check can catch: the tourniquet answer blended current guidance with older doctrine (periodic loosening) from AFH 10-644 / ATP 3-50.21; the rabies answer gave clinician-only steps from CDC's clinician guide. Fixes: per-source passage exclusions with recorded reasons (tourniquet passages of those two manuals, pending clinician review); `audience: clinician` on JTS PCC and CDC Travelers' Health, labelled in prompts, rule to name steps that need a professional, note shown to the user.
 - 20-question quick set (`evals/medical-survival-quick.jsonl`, exact subset) is the model-eval default.
 
+**Session 4 — the customer journey:**
+- Signed drive profiles (spec/profile.md): issued by the store, verified by the app and `kb verify-drive`; Node-signed profiles verify in Rust (tested), any edit is rejected.
+- App: Library tab (every source with license, authority, audience; medical disclaimer), "My equipment" picker and default state from the profile.
+- `kb profile-sign`, `kb verify-drive` (packages full-hash, profile, model checksums, runtimes per OS).
+- `scripts/build-drive.sh`: builds a drive from a profile for macOS/Windows/Linux; idempotent (re-run repairs); removes packages/models the profile no longer selects; ends with verify-drive.
+- Store (`commerce/`, Next.js 16.4.2): editions, configurator (OS, model, state, equipment, grades, delivery), accounts, Stripe Checkout + webhook (needs keys) or simulated test payment, portal with build status and signed profile downloads, configuration changes → new profile version, factory queue API. Unit tests and a scripted end-to-end journey pass locally.
+- `journey` workflow: store journey → drive from profile v1 → network namespace with no network → real 4B answers, search, routing → profile v2 rebuild removes the Texas map.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)

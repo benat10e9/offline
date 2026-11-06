@@ -313,9 +313,126 @@ pub fn verify_package(dir: &Path, trusted: &[VerifyingKey], mode: VerifyMode) ->
     Ok(manifest)
 }
 
+// ---------- signed drive profiles ----------
+
+/// A customer's drive configuration, issued by the store and signed with a trusted key.
+/// It selects what goes on the drive and personalises the app (equipment, state).
+/// See spec/profile.md.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriveProfile {
+    pub format: u32,
+    pub profile_id: String,
+    /// Increases each time the customer changes their configuration.
+    pub version: u32,
+    #[serde(default)]
+    pub order_id: Option<String>,
+    pub edition: String,
+    /// Operating systems to put runtimes on the drive for: "macos", "windows", "linux".
+    pub os: Vec<String>,
+    /// Model catalog id, e.g. "qwen3-4b-q4km".
+    pub model: String,
+    /// Package ids to install.
+    pub packages: Vec<String>,
+    #[serde(default)]
+    pub jurisdiction: Option<String>,
+    #[serde(default)]
+    pub assets: Vec<ProfileAsset>,
+    /// Free-form customer requests recorded for future packages (e.g. school grades).
+    #[serde(default)]
+    pub requests: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileAsset {
+    pub label: String,
+    pub make: String,
+    pub model: String,
+    #[serde(default)]
+    pub year: Option<u32>,
+}
+
+impl ProfileAsset {
+    /// The evidence classifier's equipment key, `make:model`, normalised.
+    pub fn key(&self) -> String {
+        let norm = |s: &str| s.trim().to_lowercase().split_whitespace().collect::<Vec<_>>().join("-");
+        format!("{}:{}", norm(&self.make), norm(&self.model))
+    }
+}
+
+pub const PROFILE_FILE: &str = "profile.json";
+pub const PROFILE_SIG: &str = "profile.sig";
+
+/// Sign arbitrary bytes, in the same `ed25519 <pub> <sig>` format as package manifests.
+pub fn signature_line(bytes: &[u8], key: &KeyPair) -> String {
+    format!("ed25519 {} {}\n", key.public_hex(), hex::encode(key.signing.sign(bytes).to_bytes()))
+}
+
+/// Check a signature line against trusted keys.
+pub fn verify_signature_line(bytes: &[u8], line: &str, trusted: &[VerifyingKey]) -> Result<(), PackageError> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() != 3 || parts[0] != "ed25519" {
+        return Err(PackageError::BadSignatureEncoding);
+    }
+    let sig_bytes: [u8; 64] = hex::decode(parts[2])
+        .map_err(|_| PackageError::BadSignatureEncoding)?
+        .try_into()
+        .map_err(|_| PackageError::BadSignatureEncoding)?;
+    let sig = Signature::from_bytes(&sig_bytes);
+    if trusted.iter().any(|k| k.verify(bytes, &sig).is_ok()) {
+        Ok(())
+    } else {
+        Err(PackageError::UntrustedSignature)
+    }
+}
+
+/// Read and verify `profile.json` + `profile.sig` in `dir`.
+pub fn read_profile(dir: &Path, trusted: &[VerifyingKey]) -> Result<DriveProfile, PackageError> {
+    let p = dir.join(PROFILE_FILE);
+    let bytes = fs::read(&p).map_err(io_err(&p))?;
+    let s = dir.join(PROFILE_SIG);
+    let line = fs::read_to_string(&s).map_err(io_err(&s))?;
+    verify_signature_line(&bytes, &line, trusted)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_sign_and_verify() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = KeyPair::generate().unwrap();
+        let profile = DriveProfile {
+            format: 1,
+            profile_id: "p1".into(),
+            version: 2,
+            order_id: Some("o1".into()),
+            edition: "essential".into(),
+            os: vec!["macos".into(), "windows".into()],
+            model: "qwen3-4b-q4km".into(),
+            packages: vec!["medical-survival".into()],
+            jurisdiction: Some("US-TX".into()),
+            assets: vec![ProfileAsset {
+                label: "Home generator".into(),
+                make: "Generac".into(),
+                model: "GP 6500".into(),
+                year: None,
+            }],
+            requests: vec![],
+        };
+        let bytes = serde_json::to_vec_pretty(&profile).unwrap();
+        fs::write(dir.path().join(PROFILE_FILE), &bytes).unwrap();
+        fs::write(dir.path().join(PROFILE_SIG), signature_line(&bytes, &key)).unwrap();
+        let trusted = vec![parse_public_key(&key.public_hex()).unwrap()];
+        let got = read_profile(dir.path(), &trusted).unwrap();
+        assert_eq!(got, profile);
+        assert_eq!(got.assets[0].key(), "generac:gp-6500");
+        // Any edit breaks the signature.
+        fs::write(dir.path().join(PROFILE_FILE), String::from_utf8(bytes).unwrap().replace("essential", "family"))
+            .unwrap();
+        assert!(matches!(read_profile(dir.path(), &trusted), Err(PackageError::UntrustedSignature)));
+    }
 
     fn input() -> ManifestInput {
         ManifestInput {

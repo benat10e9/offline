@@ -172,3 +172,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .dir-summary { margin: 8px 0; font-weight: 600; }
 .dir-summary small { display: block; font-weight: 400; color: var(--ink-2); font-size: 13px; }
 #dir-clear { border: 1px solid var(--rule); background: none; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+
+.lib-title { font-size: 20px; margin: 0 0 6px; }
+.lib-pkg { margin-top: 20px; }
+.lib-pkg h3 { font-size: 17px; margin: 0 0 6px; }
+.lib-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.lib-table th, .lib-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.lib-table th { color: var(--ink-2); font-weight: 600; }
+.lib-wrap { overflow-x: auto; }

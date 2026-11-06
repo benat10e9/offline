@@ -68,6 +68,33 @@ jobs:
             | python3 -c "import sys,json;a=json.load(sys.stdin);print('search:', a['class'], [h['title'] for h in a['citable'][:3]])"
           $K route --dir drive/packages/maps-texas/maps/routing --from 30.2672,-97.7431 --to 29.7604,-95.3698
           $K eval --root drive --questions evals/medical-survival-quick.jsonl --with-model --allow-unevaluated --limit 4 --out offline-eval.json
+          echo "== conversation: follow-ups, streaming, persistence across restart"
+          export KB_DATA_DIR=$PWD/chatdata
+          serve() { $K serve --root drive --port 8799 --allow-unevaluated > serve.log 2>&1 & SP=$!; \
+            for i in $(seq 1 150); do curl -sf localhost:8799/api/status | grep -q '"state":"ready"' && return 0; sleep 2; done; return 1; }
+          serve
+          CID=$(curl -sf -X POST localhost:8799/api/conversations | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+          ask() { curl -sf -X POST -H 'Content-Type: application/json' -d "{\"question\":\"$1\"}" localhost:8799/api/conversations/$CID/ask; }
+          ask "Can I run a generator in my garage?" > t1.ndjson
+          ask "What if I leave the door open?" > t2.ndjson
+          ask "How far away from the house should it be?" > t3.ndjson
+          python3 - <<'PY'
+          import json
+          for f in ("t1.ndjson", "t2.ndjson", "t3.ndjson"):
+              ev = [json.loads(l) for l in open(f) if l.strip()]
+              tokens = sum(1 for e in ev if e["type"] == "token")
+              fin = ev[-1]
+              a = fin.get("answer") or {}
+              print(f, "follow_up=%s" % ev[0].get("follow_up"), "tokens=%d" % tokens, "mode=%s" % fin.get("mode"), "class=%s" % a.get("class"))
+              print("   ", (a.get("text") or "")[:300].replace("\n", " "))
+              assert fin["type"] == "final" and fin["mode"] == "answer", fin
+              assert tokens > 0, "answer was streamed"
+          assert json.loads(open("t2.ndjson").readline())["follow_up"] is True
+          PY
+          kill $SP; sleep 2
+          serve
+          curl -sf localhost:8799/api/conversations | python3 -c 'import sys,json;c=json.load(sys.stdin)[0];print("after restart:",c["title"],"|",c["messages"],"messages");assert c["messages"]==6'
+          kill $SP
           SH
           sudo unshare --net -- bash offline.sh 2>&1 | tee -a journey.txt
       - name: Configuration update - rebuild the same drive from profile v2

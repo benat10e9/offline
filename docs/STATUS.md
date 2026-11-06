@@ -80,6 +80,13 @@ Findings fixed in this round:
 - `kb bench` prints progress, elapsed time and time remaining.
 - `evals/procedures.jsonl`: 10 emergency procedures with required elements (`must_include`); eval reports incomplete answers.
 
+**Conversational redesign (2026-11-06):**
+- Chat UI: conversation sidebar with New chat and delete, message thread, fixed composer, streamed answers (tokens as generated, then the verified answer), Markdown lists/headings/bold, small evidence chip instead of the large banner, cited sources collapsible, "Remember" on user messages.
+- SQLite store on the user's computer (ADR 0014): conversations, messages (with verified answer metadata), memories. Survives restarts (tested).
+- Follow-ups: detected; searched with the previous question, relevance judged against it; last 3 exchanges in the prompt; saved notes and profile equipment in the prompt labelled as unverified user statements.
+- llama-server streaming (SSE). Endpoints: /api/conversations, /api/conversations/:id, /api/conversations/:id/ask (NDJSON stream), /api/memories.
+- Not yet: model-suggested memories (deliberately), conversation summarisation for long chats, encrypted portable history.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)

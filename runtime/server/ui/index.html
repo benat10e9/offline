@@ -13,7 +13,7 @@
   <header class="top">
     <h1 class="brand">Offline Library</h1>
     <nav class="tabs" aria-label="Views">
-      <button type="button" class="tab" id="tab-ask" aria-pressed="true">Ask</button>
+      <button type="button" class="tab" id="tab-ask" aria-pressed="true">Chat</button>
       <button type="button" class="tab" id="tab-map" aria-pressed="false">Map</button>
       <button type="button" class="tab" id="tab-library" aria-pressed="false">Library</button>
     </nav>
@@ -22,6 +22,41 @@
       <span class="pill" id="model-status">Checking assistant…</span>
     </div>
   </header>
+
+  <section id="askview" class="chat" aria-label="Chat">
+    <aside class="chat-side" aria-label="Conversations">
+      <button type="button" id="new-chat" class="new-chat">New chat</button>
+      <ol id="chat-list" class="chat-list"></ol>
+    </aside>
+    <div class="chat-main">
+      <div id="thread" class="thread" aria-live="polite"></div>
+      <div class="composer-wrap">
+        <div id="dev-warning" class="dev-warning" hidden>This assistant model has not passed safety evaluation. Development use only.</div>
+        <form id="ask-form" class="composer">
+          <details class="context" id="context">
+            <summary id="context-summary">Equipment and location: not set</summary>
+            <div class="context-fields">
+              <label id="my-equipment-label" hidden>My equipment
+                <select id="my-equipment"><option value="">Choose…</option></select>
+              </label>
+              <label>Equipment make <input id="asset-make" autocomplete="off" placeholder="e.g. Generac"></label>
+              <label>Model <input id="asset-model" autocomplete="off" placeholder="e.g. GP6500"></label>
+              <label>State
+                <select id="jurisdiction"><option value="">Not set</option></select>
+              </label>
+            </div>
+            <p class="hint">Answers about specific equipment are only marked verified when that exact model's manual is installed.</p>
+          </details>
+          <div class="composer-row">
+            <label class="visually-hidden" for="question">Message</label>
+            <textarea id="question" rows="1" maxlength="2000" placeholder="Ask about first aid, water, power, repairs…" required></textarea>
+            <button type="submit" id="ask-btn" class="send" aria-label="Send">Send</button>
+          </div>
+          <p class="fineprint">Answers come only from your installed library and show their sources. Reference only, not medical advice. In an emergency, call 911.</p>
+        </form>
+      </div>
+    </div>
+  </section>
 
   <section id="mapview" class="mapview" hidden aria-label="Offline map">
     <div class="map-side">
@@ -39,42 +74,16 @@
     <div id="map" class="map"></div>
   </section>
 
-  <main class="main" id="askview">
-    <section class="ask" aria-label="Ask a question">
-      <form id="ask-form">
-        <label class="visually-hidden" for="question">Your question</label>
-        <textarea id="question" rows="2" maxlength="2000" placeholder="Ask about first aid, water, power, repairs…" required></textarea>
-        <details class="context" id="context">
-          <summary id="context-summary">Equipment and location: not set</summary>
-          <div class="context-fields">
-            <label id="my-equipment-label" hidden>My equipment
-              <select id="my-equipment"><option value="">Choose…</option></select>
-            </label>
-            <label>Equipment make <input id="asset-make" autocomplete="off" placeholder="e.g. Generac"></label>
-            <label>Model <input id="asset-model" autocomplete="off" placeholder="e.g. GP6500"></label>
-            <label>State
-              <select id="jurisdiction">
-                <option value="">Not set</option>
-              </select>
-            </label>
-          </div>
-          <p class="hint">Answers about specific equipment are only marked verified when that exact model's manual is installed.</p>
-        </details>
-        <div class="actions">
-          <button type="submit" id="ask-btn" class="primary">Ask</button>
-          <button type="button" id="search-btn">Search the library</button>
-        </div>
-      </form>
-      <div id="dev-warning" class="dev-warning" hidden>
-        This assistant model has not passed safety evaluation. Development use only.
-      </div>
-    </section>
-
-    <section id="results" class="results" aria-live="polite"></section>
-    <p id="empty" class="empty">Answers show which document they come from. Tap a source to read the original passage.</p>
-  </main>
-
   <section id="libraryview" class="main" hidden aria-label="Installed library">
+    <h2 class="lib-title">What the assistant remembers</h2>
+    <p class="hint">Notes you save are used as context in every conversation. They stay on this computer. They are your own statements, never treated as verified facts.</p>
+    <form id="memory-form" class="memory-form">
+      <label class="visually-hidden" for="memory-text">New note</label>
+      <input id="memory-text" maxlength="500" placeholder="e.g. We have a Generac GP6500 generator and a well pump">
+      <button type="submit">Save note</button>
+    </form>
+    <ul id="memory-list" class="memory-list"></ul>
+
     <h2 class="lib-title">Installed library</h2>
     <p class="hint">Every answer cites these sources. Medical content comes from U.S. government publications and has not been clinically reviewed for this product; it is reference material, not medical advice. In an emergency, call 911.</p>
     <div id="library-list"></div>

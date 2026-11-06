@@ -89,114 +89,243 @@ async function refreshStatus() {
   }
 }
 
-// ---------- rendering ----------
-function bandFor(cls, sources, extra) {
-  const primary = sources[0];
-  let detail;
-  if (cls === "verified") detail = primary ? `From ${primary.title}` : "From an applicable official document";
-  else if (cls === "partial") detail = "Related material only. Not the exact document for your question.";
-  else detail = "Nothing installed answers this reliably.";
-  if (extra) detail = extra;
-  return el("div", { class: `band ${cls}` }, el("strong", {}, LABEL[cls]), el("span", {}, detail));
-}
+// ---------- chat ----------
+const LABEL_SHORT = { verified: "Verified source", partial: "Partly supported", unsupported: "Not in the library" };
+let currentConv = null;
+let sending = false;
 
-function renderAnswerText(text, citations, consulted, card) {
-  const body = el("div", { class: "body" });
-  const byMarker = new Map(citations.map((c) => [c.marker, c]));
-  const parts = text.split(/(\[S\d{1,3}\])/g);
-  for (const part of parts) {
+function inline(text, citations, consulted) {
+  // **bold** and [S#] citation chips; everything else as plain text.
+  const frag = document.createDocumentFragment();
+  const byMarker = new Map((citations || []).map((c) => [c.marker, c]));
+  for (const part of text.split(/(\*\*[^*\n]+\*\*|\[S\d{1,3}\])/g)) {
+    if (!part) continue;
     const m = part.match(/^\[S(\d{1,3})\]$/);
-    if (m && byMarker.has(Number(m[1]))) {
+    if (m) {
       const n = Number(m[1]);
-      const hit = consulted[n - 1];
-      body.append(el("button", {
-        class: "cite", type: "button", "aria-label": `Open source ${n}: ${hit ? hit.title : ""}`,
-        on: { click: () => openReader(hit) },
-      }, String(n)));
-    } else if (part) {
-      body.append(document.createTextNode(part));
-    }
-  }
-  card.append(body);
-}
-
-function renderSources(hits, card, heading, withPreview) {
-  if (!hits.length) return;
-  const list = el("ol");
-  hits.forEach((h) => {
-    const item = el("li", {},
-      el("button", { type: "button", on: { click: () => openReader(h) } }, h.title || h.doc_id),
-      h.heading ? el("span", { class: "heading" }, `, ${h.heading}`) : null);
-    if (withPreview) item.append(el("p", { class: "passage-preview" }, h.text.slice(0, 260) + (h.text.length > 260 ? "…" : "")));
-    list.append(item);
-  });
-  card.append(el("div", { class: "sources" }, heading ? el("h3", {}, heading) : null, list));
-}
-
-function renderNotes(notes, card) {
-  if (notes && notes.length) card.append(el("ul", { class: "notes" }, notes.map((n) => el("li", {}, n))));
-}
-
-function newCard(question) {
-  const card = el("article", { class: "answer new" }, el("p", { class: "q" }, question));
-  $("results").prepend(card);
-  $("empty").hidden = true;
-  return card;
-}
-
-function renderResponse(card, data) {
-  card.querySelector(".band")?.remove();
-  if (data.mode === "answer") {
-    const a = data.answer;
-    const cited = a.citations.map((c) => a.consulted[c.marker - 1]).filter(Boolean);
-    card.append(bandFor(a.class, cited));
-    renderNotes(a.notes, card);
-    if (a.text) {
-      renderAnswerText(a.text, a.citations, a.consulted, card);
-      // Show what the answer actually cites; everything else checked stays out of the way.
-      const citedIdx = new Set(a.citations.map((c) => c.marker - 1));
-      const cited = a.consulted.filter((_, i) => citedIdx.has(i));
-      const others = a.consulted.filter((_, i) => !citedIdx.has(i));
-      renderSources(cited, card, "Sources cited", false);
-      if (others.length) {
-        const holder = el("details", { class: "sources other" }, el("summary", {}, `Other passages checked (${others.length})`));
-        card.append(holder);
-        renderSources(others, holder, "", false);
+      if (byMarker.has(n) && consulted && consulted[n - 1]) {
+        const hit = consulted[n - 1];
+        frag.append(el("button", { class: "cite", type: "button", "aria-label": `Open source ${n}: ${hit.title}`, on: { click: () => openReader(hit) } }, String(n)));
       }
+    } else if (/^\*\*[^*]+\*\*$/.test(part)) {
+      frag.append(el("strong", {}, part.slice(2, -2)));
     } else {
-      renderSources(a.consulted, card, "Closest passages in the library", true);
+      frag.append(document.createTextNode(part));
     }
+  }
+  return frag;
+}
+
+/** Minimal Markdown: paragraphs, numbered and bulleted lists, headings, bold, citations. */
+function renderMarkdown(text, citations, consulted) {
+  const out = el("div", { class: "md" });
+  let list = null, listType = null, para = [];
+  const flushPara = () => { if (para.length) { out.append(el("p", {}, inline(para.join(" "), citations, consulted))); para = []; } };
+  const flushList = () => { if (list) { out.append(list); list = null; listType = null; } };
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    let m;
+    if (!line) { flushPara(); flushList(); continue; }
+    if ((m = line.match(/^(\d{1,2})[.)]\s+(.*)$/))) {
+      flushPara();
+      if (listType !== "ol") { flushList(); list = el("ol"); listType = "ol"; }
+      list.append(el("li", {}, inline(m[2], citations, consulted)));
+    } else if ((m = line.match(/^[-*•]\s+(.*)$/))) {
+      flushPara();
+      if (listType !== "ul") { flushList(); list = el("ul"); listType = "ul"; }
+      list.append(el("li", {}, inline(m[1], citations, consulted)));
+    } else if ((m = line.match(/^#{1,4}\s+(.*)$/))) {
+      flushPara(); flushList();
+      out.append(el("h4", {}, inline(m[1], citations, consulted)));
+    } else {
+      flushList();
+      para.push(line);
+    }
+  }
+  flushPara(); flushList();
+  return out;
+}
+
+function sourceList(hits, title) {
+  const list = el("ol");
+  hits.forEach((h) => list.append(el("li", {},
+    el("button", { type: "button", on: { click: () => openReader(h) } }, h.title || h.doc_id),
+    h.heading ? el("span", { class: "heading" }, `, ${h.heading}`) : null)));
+  return el("details", { class: "msg-sources" }, el("summary", {}, title), list);
+}
+
+/** Normalised view of a stored message or a final stream event. */
+function viewOf(data, content) {
+  if (data.mode === "search_only") {
+    const a = data.assessment || data;
+    return { mode: "search_only", cls: a.class, text: null, citations: [], consulted: a.citable || a.consulted || [], notes: a.notes || [], reason: data.status && (data.status.reason || data.status.error) };
+  }
+  const a = data.answer || data;
+  return { mode: "answer", cls: a.class, text: a.text != null ? a.text : content, citations: a.citations || [], consulted: a.consulted || [], notes: a.notes || [] };
+}
+
+function renderAssistant(bubble, v) {
+  bubble.replaceChildren();
+  bubble.append(el("span", { class: `evidence ${v.cls}` }, LABEL_SHORT[v.cls] || v.cls));
+  if (v.mode === "answer" && v.text) {
+    bubble.append(renderMarkdown(v.text, v.citations, v.consulted));
+  } else if (v.mode === "answer") {
+    bubble.append(el("p", {}, "I couldn't answer that from your offline library."));
+  } else if (v.consulted.length) {
+    bubble.append(el("p", {}, v.reason ? `The assistant isn't running (${v.reason}). Here is what the library has:` : "Here is what the library has:"));
+    const ul = el("ul", { class: "passages" });
+    v.consulted.slice(0, 5).forEach((h) => ul.append(el("li", {},
+      el("button", { type: "button", class: "linklike", on: { click: () => openReader(h) } }, h.title),
+      el("p", { class: "passage-preview" }, h.text.slice(0, 240) + (h.text.length > 240 ? "…" : "")))));
+    bubble.append(ul);
   } else {
-    const s = data.assessment;
-    const reason = data.status && (data.status.reason || data.status.error);
-    card.append(bandFor(s.class, s.citable.filter((h) => s.verified_keys.includes(`${h.package_id}/${h.passage_id}`)),
-      reason ? `Showing library passages. ${reason}` : null));
-    renderNotes(s.notes, card);
-    renderSources(s.citable, card, "Passages from the library", true);
+    bubble.append(el("p", {}, "Nothing in your offline library answers this."));
+  }
+  if (v.notes.length) bubble.append(el("ul", { class: "notes" }, v.notes.map((n) => el("li", {}, n))));
+  if (v.mode === "answer" && v.text) {
+    const citedIdx = new Set(v.citations.map((c) => c.marker - 1));
+    const cited = v.consulted.filter((_, i) => citedIdx.has(i));
+    const others = v.consulted.filter((_, i) => !citedIdx.has(i));
+    if (cited.length) bubble.append(sourceList(cited, `Sources (${cited.length})`));
+    if (others.length) bubble.append(sourceList(others, `Other passages checked (${others.length})`));
   }
 }
 
-async function submit(kind) {
-  const q = $("question").value.trim();
-  if (!q) { $("question").focus(); return; }
-  const card = newCard(q);
-  card.append(el("div", { class: "band pending" }, el("strong", {}, kind === "ask" ? "Reading the library…" : "Searching…")));
-  for (const b of ["ask-btn", "search-btn"]) $(b).disabled = true;
+function addUser(text) {
+  const remember = el("button", { type: "button", class: "remember", title: "Save this as a note the assistant will remember",
+    on: { click: async (e) => {
+      const r = await fetch("/api/memories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      e.target.textContent = r.ok ? "Remembered" : "Couldn't save";
+      e.target.disabled = true;
+      memoriesRendered = false;
+    } } }, "Remember");
+  const row = el("div", { class: "msg user" }, el("div", { class: "bubble" }, text), remember);
+  $("thread").append(row);
+  return row;
+}
+
+function addAssistant() {
+  const bubble = el("div", { class: "bubble" });
+  $("thread").append(el("div", { class: "msg assistant" }, bubble));
+  return bubble;
+}
+
+function scrollThread() { const t = $("thread"); t.scrollTop = t.scrollHeight; }
+
+function showWelcome() {
+  $("thread").replaceChildren(el("div", { class: "welcome" },
+    el("h2", {}, "What do you need to know?"),
+    el("p", {}, "Ask in plain words. Answers come from your offline library and show where they came from. Follow-up questions keep the context."),
+    el("div", { class: "starters" }, ["How do I purify river water?", "How do I treat a burn?", "Can I run a generator in my garage?", "What are signs of heat stroke?"]
+      .map((q) => el("button", { type: "button", on: { click: () => { $("question").value = q; send(); } } }, q)))));
+}
+
+async function loadConversations() {
   try {
-    const r = await fetch(kind === "ask" ? "/api/ask" : "/api/search", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, ...context() }),
+    const list = await (await fetch("/api/conversations")).json();
+    const ol = $("chat-list");
+    ol.replaceChildren(...list.map((c) => el("li", { class: c.id === currentConv ? "active" : "" },
+      el("button", { type: "button", class: "conv", on: { click: () => openConversation(c.id) } }, c.title || "New chat"),
+      el("button", { type: "button", class: "del", "aria-label": `Delete ${c.title}`, title: "Delete",
+        on: { click: async () => { await fetch(`/api/conversations/${c.id}`, { method: "DELETE" }); if (c.id === currentConv) newChat(); loadConversations(); } } }, "×"))));
+  } catch { /* storage unavailable: chat still works per message */ }
+}
+
+async function openConversation(id) {
+  currentConv = id;
+  const msgs = await (await fetch(`/api/conversations/${id}`)).json();
+  $("thread").replaceChildren();
+  for (const m of msgs) {
+    if (m.role === "user") addUser(m.content);
+    else renderAssistant(addAssistant(), viewOf(m.meta || { mode: "answer", class: "unsupported" }, m.content));
+  }
+  scrollThread();
+  loadConversations();
+}
+
+function newChat() {
+  currentConv = null;
+  showWelcome();
+  loadConversations();
+  $("question").focus();
+}
+
+async function send() {
+  const q = $("question").value.trim();
+  if (!q || sending) return;
+  sending = true;
+  $("ask-btn").disabled = true;
+  $("question").value = "";
+  autosize();
+  if (!$("thread").querySelector(".msg")) $("thread").replaceChildren();
+  try {
+    if (currentConv == null) {
+      const r = await fetch("/api/conversations", { method: "POST" });
+      currentConv = (await r.json()).id;
+    }
+    addUser(q);
+    const bubble = addAssistant();
+    bubble.append(el("span", { class: "evidence pending" }, "Reading the library…"));
+    const live = el("div", { class: "md streaming" });
+    bubble.append(live);
+    scrollThread();
+    const res = await fetch(`/api/conversations/${currentConv}/ask`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, ...context() }),
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
-    renderResponse(card, kind === "ask" ? data : { mode: "search_only", assessment: data });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Request failed (${res.status})`);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", streamed = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        const ev = JSON.parse(line);
+        if (ev.type === "token") {
+          streamed += ev.text;
+          bubble.firstChild.textContent = "Writing…";
+          live.textContent = streamed.replace(/<think>[\s\S]*?(<\/think>|$)/g, "").replace(/\[S\d{1,3}\]/g, "");
+          scrollThread();
+        } else if (ev.type === "final") {
+          renderAssistant(bubble, viewOf(ev));
+        } else if (ev.type === "error") {
+          bubble.replaceChildren(el("span", { class: "evidence unsupported" }, "Error"), el("p", {}, ev.message));
+        }
+      }
+    }
   } catch (e) {
-    card.querySelector(".band")?.remove();
-    card.append(el("div", { class: "band unsupported" }, el("strong", {}, "The request did not complete"), el("span", {}, String(e.message || e))));
+    const b = addAssistant();
+    b.append(el("span", { class: "evidence unsupported" }, "Error"), el("p", {}, String(e.message || e)));
   } finally {
-    for (const b of ["ask-btn", "search-btn"]) $(b).disabled = false;
+    sending = false;
+    $("ask-btn").disabled = false;
+    scrollThread();
+    loadConversations();
     refreshStatus();
   }
+}
+
+function autosize() {
+  const t = $("question");
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight, 200) + "px";
+}
+
+// ---------- memories ----------
+let memoriesRendered = false;
+async function renderMemories() {
+  if (memoriesRendered) return;
+  const list = await (await fetch("/api/memories")).json().catch(() => []);
+  $("memory-list").replaceChildren(...(list.length ? list.map((m) => el("li", {},
+    el("span", {}, m.text),
+    el("button", { type: "button", "aria-label": "Delete note", on: { click: async () => {
+      await fetch(`/api/memories/${m.id}`, { method: "DELETE" }); memoriesRendered = false; renderMemories(); } } }, "Delete")))
+    : [el("li", { class: "hint" }, "No notes yet. Tap Remember on any of your messages, or add one here.")]));
+  memoriesRendered = true;
 }
 
 // ---------- reader ----------
@@ -422,17 +551,29 @@ function goToPlace(p) {
 
 document.addEventListener("DOMContentLoaded", () => {
   $("tab-ask").addEventListener("click", () => showView("ask"));
-  $("tab-library").addEventListener("click", () => showView("library"));
+  $("tab-library").addEventListener("click", () => showView("library").then(renderMemories));
   $("tab-map").addEventListener("click", () => showView("map").catch((e) => { $("map-note").textContent = String(e.message || e); }));
   $("place-q").addEventListener("input", searchPlaces);
   $("dir-clear").addEventListener("click", clearDirections);
+  $("new-chat").addEventListener("click", newChat);
+  $("memory-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = $("memory-text").value.trim();
+    if (!text) return;
+    await fetch("/api/memories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    $("memory-text").value = "";
+    memoriesRendered = false;
+    renderMemories();
+  });
   setupContext();
   refreshStatus();
   applyProfile();
-  $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); submit("ask"); });
-  $("search-btn").addEventListener("click", () => submit("search"));
+  showWelcome();
+  loadConversations();
+  $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+  $("question").addEventListener("input", autosize);
   $("question").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit("ask"); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
   $("reader-close").addEventListener("click", closeReader);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("reader").hidden) closeReader(); });

@@ -441,7 +441,12 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&a)?);
         }
         Cmd::Serve { root, port, allow_unevaluated, no_model } => {
-            let engine = std::sync::Arc::new(kb_server::Engine::open(kb_server::Root::new(&root))?);
+            let data_dir = kb_server::chat::default_data_dir();
+            let engine = std::sync::Arc::new(
+                kb_server::Engine::open(kb_server::Root::new(&root))?
+                    .with_chat(kb_server::chat::ChatStore::open(&data_dir)?),
+            );
+            eprintln!("conversations: {}", data_dir.display());
             for p in &engine.problems {
                 eprintln!("NOT MOUNTED {}: {}", p.path, p.error);
             }

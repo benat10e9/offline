@@ -26,6 +26,28 @@ pub enum AgentError {
 /// A chat model. The production implementation talks to a local llama-server.
 pub trait ChatModel {
     fn chat(&self, system: &str, user: &str) -> Result<String, AgentError>;
+
+    /// Stream the reply, calling `on_token` with each piece as it is generated.
+    /// Default: no streaming, one call with the whole reply.
+    fn chat_stream(&self, system: &str, user: &str, on_token: &mut dyn FnMut(&str)) -> Result<String, AgentError> {
+        let t = self.chat(system, user)?;
+        on_token(&t);
+        Ok(t)
+    }
+}
+
+/// Conversation context for one turn: recent exchanges, the user's saved notes, and the
+/// text to search with (the question joined with the previous one for follow-ups).
+#[derive(Debug, Clone, Default)]
+pub struct Turn {
+    /// (user question, assistant answer) pairs, oldest first.
+    pub history: Vec<(String, String)>,
+    /// Things the user told the app about themselves. Context, never evidence.
+    pub notes: Vec<String>,
+    pub retrieval_text: Option<String>,
+    /// What relevance is judged against for a follow-up: the topic (the earlier question),
+    /// since "what about with the door open?" alone, or joined, is too thin to judge by.
+    pub topic_text: Option<String>,
 }
 
 /// OpenAI-compatible client for llama.cpp's `llama-server` on localhost.
@@ -102,6 +124,38 @@ impl ChatModel for LlamaServer {
             .map(|s| s.to_string())
             .ok_or_else(|| AgentError::Model(format!("unexpected response: {resp}")))
     }
+
+    /// Server-sent events from llama-server's OpenAI-compatible endpoint.
+    fn chat_stream(&self, system: &str, user: &str, on_token: &mut dyn FnMut(&str)) -> Result<String, AgentError> {
+        use std::io::BufRead;
+        let url = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "stream": true
+        });
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(900))
+            .send_json(body)
+            .map_err(|e| AgentError::Model(e.to_string()))?;
+        let mut out = String::new();
+        for line in std::io::BufReader::new(resp.into_reader()).lines() {
+            let line = line.map_err(|e| AgentError::Model(e.to_string()))?;
+            let Some(data) = line.strip_prefix("data:") else { continue };
+            let data = data.trim();
+            if data == "[DONE]" {
+                break;
+            }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                if let Some(piece) = v["choices"][0]["delta"]["content"].as_str() {
+                    out.push_str(piece);
+                    on_token(piece);
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
 pub const SYSTEM_PROMPT: &str = "You answer questions using ONLY the numbered source passages provided. \
@@ -151,6 +205,34 @@ pub fn expand_procedures(library: &Library, hits: &mut [Hit]) {
             last = n;
         }
     }
+}
+
+fn strip_markers(s: &str) -> String {
+    marker_re().replace_all(s, "").to_string()
+}
+
+/// Conversation context ahead of the passages: saved notes (labelled as unverified) and
+/// recent exchanges, answers shortened and without citation markers.
+pub fn build_context(turn: &Turn) -> String {
+    let mut s = String::new();
+    if !turn.notes.is_empty() {
+        s.push_str("What the user has told you about themselves (their own statements, not verified facts; never cite these as sources):\n");
+        for n in &turn.notes {
+            s.push_str("- ");
+            s.push_str(n);
+            s.push('\n');
+        }
+        s.push('\n');
+    }
+    if !turn.history.is_empty() {
+        s.push_str("Earlier in this conversation (for context only; cite only the numbered passages below):\n");
+        for (q, a) in turn.history.iter().rev().take(3).rev() {
+            let a: String = strip_markers(a).chars().take(600).collect();
+            s.push_str(&format!("User: {q}\nAssistant: {a}\n"));
+        }
+        s.push('\n');
+    }
+    s
 }
 
 /// Build the user turn: evidence notes, numbered passages, then the question.
@@ -383,12 +465,24 @@ pub fn search_only(
     ctx: &QuestionContext,
     opts: &AskOptions,
 ) -> Result<Assessment, AgentError> {
+    search_with(library, sources, question, None, ctx, opts)
+}
+
+/// Search with `question`; judge relevance against `relevance_text` when given (follow-ups).
+pub fn search_with(
+    library: &Library,
+    sources: &dyn SourceLookup,
+    question: &str,
+    relevance_text: Option<&str>,
+    ctx: &QuestionContext,
+    opts: &AskOptions,
+) -> Result<Assessment, AgentError> {
     // Search on what the question is about, not how it is phrased: "How do I…" in
     // page titles otherwise outranks the passages that answer the question.
     let terms: Vec<String> = kb_evidence::content_terms(question).into_iter().map(|(w, _)| w).collect();
     let query = if terms.is_empty() { question.to_string() } else { terms.join(" ") };
     let hits = library.search(&query, opts.retrieve)?;
-    let mut a = assess(question, ctx, &hits, sources, library);
+    let mut a = assess(relevance_text.unwrap_or(question), ctx, &hits, sources, library);
     a.citable.truncate(opts.max_passages);
     Ok(a)
 }
@@ -401,7 +495,25 @@ pub fn ask(
     ctx: &QuestionContext,
     opts: &AskOptions,
 ) -> Result<Answer, AgentError> {
-    let mut assessment = search_only(library, sources, question, ctx, opts)?;
+    ask_with(library, sources, model, question, ctx, opts, &Turn::default(), &mut |_| {})
+}
+
+/// One conversational turn: retrieval uses `turn.retrieval_text` (follow-ups include the
+/// previous question), the prompt carries notes and recent history, tokens stream through
+/// `on_token`, and the final answer is verified exactly as in `ask`.
+#[allow(clippy::too_many_arguments)]
+pub fn ask_with(
+    library: &Library,
+    sources: &dyn SourceLookup,
+    model: &dyn ChatModel,
+    question: &str,
+    ctx: &QuestionContext,
+    opts: &AskOptions,
+    turn: &Turn,
+    on_token: &mut dyn FnMut(&str),
+) -> Result<Answer, AgentError> {
+    let search_text = turn.retrieval_text.as_deref().unwrap_or(question);
+    let mut assessment = search_with(library, sources, search_text, turn.topic_text.as_deref(), ctx, opts)?;
     expand_procedures(library, &mut assessment.citable);
     let mut notes = assessment.notes.clone();
     if assessment
@@ -425,8 +537,8 @@ pub fn ask(
         });
     }
 
-    let prompt = build_prompt(question, &assessment, sources);
-    let raw = model.chat(SYSTEM_PROMPT, &prompt)?;
+    let prompt = build_context(turn) + &build_prompt(question, &assessment, sources);
+    let raw = model.chat_stream(SYSTEM_PROMPT, &prompt, on_token)?;
     let v = verify_citations(&raw, &assessment.citable);
 
     let mut class = assessment.class;
@@ -743,6 +855,46 @@ mod tests {
         );
         let a = ask(&lib, &src, &full, q, &QuestionContext::default(), &AskOptions::default()).unwrap();
         assert_eq!(a.class, EvidenceClass::Verified);
+    }
+
+    #[test]
+    fn follow_up_uses_retrieval_text_history_and_notes() {
+        struct Capture(std::sync::Mutex<String>);
+        impl ChatModel for Capture {
+            fn chat(&self, _s: &str, u: &str) -> Result<String, AgentError> {
+                *self.0.lock().unwrap() = u.to_string();
+                Ok("Keep it outdoors, away from windows [S1].".into())
+            }
+        }
+        let (_d, lib, src) = setup();
+        let m = Capture(std::sync::Mutex::new(String::new()));
+        let turn = Turn {
+            history: vec![(
+                "Can I run my generator in the garage?".into(),
+                "No [S1]. Carbon monoxide can kill.".into(),
+            )],
+            notes: vec!["We have a Generac GP6500".into()],
+            retrieval_text: Some("Can I run my generator in the garage? What about with the door open?".into()),
+            topic_text: Some("Can I run my generator in the garage?".into()),
+        };
+        let mut streamed = String::new();
+        let a = ask_with(
+            &lib,
+            &src,
+            &m,
+            "What about with the door open?",
+            &QuestionContext::default(),
+            &AskOptions::default(),
+            &turn,
+            &mut |t| streamed.push_str(t),
+        )
+        .unwrap();
+        let prompt = m.0.lock().unwrap().clone();
+        assert!(prompt.contains("We have a Generac GP6500") && prompt.contains("not verified facts"));
+        assert!(prompt.contains("User: Can I run my generator in the garage?"));
+        assert!(!prompt.contains("No [S1]"), "markers from earlier answers are stripped");
+        assert_eq!(a.class, EvidenceClass::Verified, "the follow-up retrieved the generator passage");
+        assert!(streamed.contains("outdoors"));
     }
 
     #[test]

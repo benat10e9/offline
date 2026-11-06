@@ -127,6 +127,8 @@ pub struct Engine {
     pub profile: Option<kb_packages::DriveProfile>,
     /// Package manifests' source lists, for the Library view.
     pub library_info: Vec<LibraryPackage>,
+    /// Conversations and saved memories on this computer (None in tests and tools).
+    pub chat: Option<chat::ChatStore>,
     model: Mutex<ModelSlot>,
 }
 
@@ -305,6 +307,7 @@ impl Engine {
             places,
             profile,
             library_info,
+            chat: None,
             model: Mutex::new(ModelSlot::Status(ModelStatus::SearchOnly { reason: "Model not started".into() })),
         })
     }
@@ -363,6 +366,119 @@ impl Engine {
             }
             Err(e) => self.set_status(ModelStatus::Failed { model: model.id, error: e.to_string() }),
         }
+    }
+
+    /// Attach the local conversation store.
+    pub fn with_chat(mut self, store: chat::ChatStore) -> Self {
+        self.chat = Some(store);
+        self
+    }
+
+    /// One chat turn, streamed as JSON lines through `send`. Stores both messages.
+    pub fn chat_turn(&self, conversation: i64, req: &QuestionRequest, send: &mut dyn FnMut(serde_json::Value)) {
+        let Some(store) = &self.chat else {
+            send(serde_json::json!({"type": "error", "message": "Conversation storage is not available."}));
+            return;
+        };
+        let history_msgs = store.messages(conversation).unwrap_or_default();
+        if let Err(e) = store.add_message(conversation, "user", &req.question, None) {
+            send(serde_json::json!({"type": "error", "message": e.to_string()}));
+            return;
+        }
+        // Pair up earlier exchanges.
+        let mut history = Vec::new();
+        let mut last_user: Option<String> = None;
+        for m in &history_msgs {
+            match m.role.as_str() {
+                "user" => last_user = Some(m.content.clone()),
+                "assistant" => {
+                    if let Some(q) = last_user.take() {
+                        history.push((q, m.content.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let prev_question = history_msgs.iter().rev().find(|m| m.role == "user").map(|m| m.content.clone());
+        let mut notes: Vec<String> = store.memories().unwrap_or_default().into_iter().map(|m| m.text).collect();
+        if let Some(p) = &self.profile {
+            for a in &p.assets {
+                notes.push(format!(
+                    "{}: {} {}{}",
+                    a.label,
+                    a.make,
+                    a.model,
+                    a.year.map(|y| format!(" ({y})")).unwrap_or_default()
+                ));
+            }
+        }
+        let follow = prev_question.as_ref().filter(|_| chat::is_follow_up(&req.question));
+        let turn = kb_agent::Turn {
+            history,
+            notes,
+            retrieval_text: follow.map(|p| format!("{p} {}", req.question)),
+            topic_text: follow.cloned(),
+        };
+        send(serde_json::json!({"type": "start", "follow_up": follow.is_some()}));
+        let ctx = req.context();
+        let result = self.with_model(|url| {
+            let m = LlamaServer::new(url);
+            kb_agent::ask_with(
+                &self.library,
+                &self.sources,
+                &m,
+                &req.question,
+                &ctx,
+                &AskOptions::default(),
+                &turn,
+                &mut |t| send(serde_json::json!({"type": "token", "text": t})),
+            )
+        });
+        let (final_event, content, meta) = match result {
+            Some((Ok(answer), unevaluated)) => {
+                let meta = serde_json::json!({
+                    "mode": "answer", "class": answer.class, "citations": answer.citations,
+                    "consulted": answer.consulted, "notes": answer.notes, "unevaluated_model": unevaluated,
+                    "follow_up": follow.is_some(),
+                });
+                let text = answer.text.clone().unwrap_or_default();
+                (
+                    serde_json::json!({"type": "final", "mode": "answer", "answer": answer, "unevaluated_model": unevaluated}),
+                    text,
+                    meta,
+                )
+            }
+            Some((Err(e), _)) => {
+                send(serde_json::json!({"type": "error", "message": e.to_string()}));
+                return;
+            }
+            None => {
+                let search_text = turn.retrieval_text.as_deref().unwrap_or(&req.question);
+                match kb_agent::search_with(
+                    &self.library,
+                    &self.sources,
+                    search_text,
+                    turn.topic_text.as_deref(),
+                    &ctx,
+                    &AskOptions::default(),
+                ) {
+                    Ok(a) => {
+                        let meta = serde_json::json!({"mode": "search_only", "class": a.class, "consulted": a.citable, "notes": a.notes});
+                        (
+                            serde_json::json!({"type": "final", "mode": "search_only", "assessment": a, "status": self.model_status()}),
+                            String::new(),
+                            meta,
+                        )
+                    }
+                    Err(e) => {
+                        send(serde_json::json!({"type": "error", "message": e.to_string()}));
+                        return;
+                    }
+                }
+            }
+        };
+        let _ = store.add_message(conversation, "assistant", &content, Some(&meta));
+        send(final_event);
     }
 
     /// Stop llama-server. Call on app exit: some shells exit without running destructors.
@@ -798,6 +914,37 @@ fn serve_file(req: tiny_http::Request, base: &std::path::Path, rel: &str) {
     }
 }
 
+/// Bytes from a channel, for streaming responses (chunked transfer encoding).
+struct ChannelReader {
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+    buf: Vec<u8>,
+    pos: usize,
+}
+
+impl Read for ChannelReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if self.pos >= self.buf.len() {
+            match self.rx.recv() {
+                Ok(b) => {
+                    self.buf = b;
+                    self.pos = 0;
+                }
+                Err(_) => return Ok(0),
+            }
+        }
+        let n = out.len().min(self.buf.len() - self.pos);
+        out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
+fn read_json(req: &mut tiny_http::Request) -> Option<serde_json::Value> {
+    let mut s = String::new();
+    req.as_reader().take(64 * 1024).read_to_string(&mut s).ok()?;
+    serde_json::from_str(&s).ok()
+}
+
 fn read_body(req: &mut tiny_http::Request) -> Option<QuestionRequest> {
     let mut s = String::new();
     req.as_reader().take(64 * 1024).read_to_string(&mut s).ok()?;
@@ -805,7 +952,7 @@ fn read_body(req: &mut tiny_http::Request) -> Option<QuestionRequest> {
     (!r.question.trim().is_empty() && r.question.len() <= 2000).then_some(r)
 }
 
-fn handle(engine: &Engine, mut req: tiny_http::Request) {
+fn handle(engine: &Arc<Engine>, mut req: tiny_http::Request) {
     // Only same-machine pages may call the API (blocks other websites in the browser).
     let host_ok = req
         .headers()
@@ -850,6 +997,80 @@ fn handle(engine: &Engine, mut req: tiny_http::Request) {
         }
         (tiny_http::Method::Get, "/api/maps") => json(req, 200, &engine.maps),
         (tiny_http::Method::Get, "/api/profile") => json(req, 200, &engine.profile),
+        (m, p) if p.starts_with("/api/conversations") || p.starts_with("/api/memories") => {
+            let Some(store) = &engine.chat else { return error(req, 503, "Conversation storage is not available.") };
+            let parts: Vec<&str> = p.trim_matches('/').split('/').collect();
+            match (m, parts.as_slice()) {
+                (tiny_http::Method::Get, ["api", "conversations"]) => match store.conversations() {
+                    Ok(c) => json(req, 200, &c),
+                    Err(e) => error(req, 500, &e.to_string()),
+                },
+                (tiny_http::Method::Post, ["api", "conversations"]) => match store.create() {
+                    Ok(id) => json(req, 200, &serde_json::json!({ "id": id })),
+                    Err(e) => error(req, 500, &e.to_string()),
+                },
+                (tiny_http::Method::Get, ["api", "conversations", id]) => match id.parse::<i64>() {
+                    Ok(id) if store.exists(id) => json(req, 200, &store.messages(id).unwrap_or_default()),
+                    _ => error(req, 404, "No such conversation."),
+                },
+                (tiny_http::Method::Delete, ["api", "conversations", id]) => {
+                    match id.parse::<i64>().map(|id| store.delete(id)) {
+                        Ok(Ok(true)) => json(req, 200, &serde_json::json!({ "deleted": true })),
+                        _ => error(req, 404, "No such conversation."),
+                    }
+                }
+                (tiny_http::Method::Post, ["api", "conversations", id, "ask"]) => {
+                    let id = match id.parse::<i64>() {
+                        Ok(id) if store.exists(id) => id,
+                        _ => return error(req, 404, "No such conversation."),
+                    };
+                    let Some(q) = read_body(&mut req) else {
+                        return error(req, 400, "Send JSON with a non-empty \"question\" under 2,000 characters.");
+                    };
+                    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+                    let e = engine.clone();
+                    std::thread::spawn(move || {
+                        e.chat_turn(id, &q, &mut |v| {
+                            let mut line = serde_json::to_vec(&v).unwrap_or_default();
+                            line.push(b'\n');
+                            let _ = tx.send(line);
+                        });
+                    });
+                    let resp = tiny_http::Response::new(
+                        tiny_http::StatusCode(200),
+                        vec![
+                            header("Content-Type", "application/x-ndjson"),
+                            header("Cache-Control", "no-store"),
+                            header("X-Content-Type-Options", "nosniff"),
+                        ],
+                        ChannelReader { rx, buf: Vec::new(), pos: 0 },
+                        None,
+                        None,
+                    );
+                    let _ = req.respond(resp);
+                }
+                (tiny_http::Method::Get, ["api", "memories"]) => json(req, 200, &store.memories().unwrap_or_default()),
+                (tiny_http::Method::Post, ["api", "memories"]) => {
+                    let text = read_json(&mut req)
+                        .and_then(|v| v["text"].as_str().map(|s| s.trim().to_string()))
+                        .unwrap_or_default();
+                    if text.is_empty() || text.len() > 500 {
+                        return error(req, 400, "Send {\"text\": \"…\"} under 500 characters.");
+                    }
+                    match store.add_memory(&text) {
+                        Ok(id) => json(req, 200, &serde_json::json!({ "id": id })),
+                        Err(e) => error(req, 500, &e.to_string()),
+                    }
+                }
+                (tiny_http::Method::Delete, ["api", "memories", id]) => {
+                    match id.parse::<i64>().map(|id| store.delete_memory(id)) {
+                        Ok(Ok(true)) => json(req, 200, &serde_json::json!({ "deleted": true })),
+                        _ => error(req, 404, "No such memory."),
+                    }
+                }
+                _ => error(req, 404, "Not found"),
+            }
+        }
         (tiny_http::Method::Get, "/api/library") => json(req, 200, &engine.library_info),
         (tiny_http::Method::Get, "/api/route") => {
             let point = |k: &str| -> Option<[f64; 2]> {
@@ -925,6 +1146,7 @@ fn handle(engine: &Engine, mut req: tiny_http::Request) {
     }
 }
 
+pub mod chat;
 pub mod eval;
 
 #[cfg(test)]

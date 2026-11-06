@@ -44,7 +44,9 @@ fn start() -> Result<(String, Arc<kb_server::Engine>), String> {
             .to_string()
     })?;
     let dev = root.dir.join(kb_server::DEV_MARKER).exists() || std::env::var("KB_ALLOW_UNEVALUATED").is_ok();
-    let engine = Arc::new(kb_server::Engine::open(root).map_err(|e| e.to_string())?);
+    // Conversations and memories live on this computer, not on the drive (ADR 0014).
+    let store = kb_server::chat::ChatStore::open(&kb_server::chat::default_data_dir()).map_err(|e| e.to_string())?;
+    let engine = Arc::new(kb_server::Engine::open(root).map_err(|e| e.to_string())?.with_chat(store));
     let e2 = engine.clone();
     std::thread::spawn(move || {
         e2.start_model(&kb_server::EngineOptions { allow_unevaluated: dev, ..Default::default() });

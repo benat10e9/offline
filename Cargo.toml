@@ -47,3 +47,4 @@ fast_paths = "1"
 osmpbf = "0.3"
 bincode = "1"
 flate2 = "1"
+rusqlite = { version = "0.41", features = ["bundled"] }

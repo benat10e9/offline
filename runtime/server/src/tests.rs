@@ -290,3 +290,63 @@ fn signed_profile_is_loaded_and_tampered_profile_ignored() {
     assert!(engine.profile.is_none());
     assert!(engine.problems.iter().any(|p| p.path == "profile.json"));
 }
+
+fn ndjson(url: &str, body: serde_json::Value) -> Vec<serde_json::Value> {
+    let text = ureq::post(url).send_json(body).unwrap().into_string().unwrap();
+    text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+}
+
+#[test]
+fn conversations_stream_persist_and_remember() {
+    let root = make_root();
+    let data = tempfile::tempdir().unwrap();
+    let engine =
+        Arc::new(Engine::open(Root::new(root.path())).unwrap().with_chat(chat::ChatStore::open(data.path()).unwrap()));
+    engine.start_model(&EngineOptions::default());
+    let r = serve(engine.clone(), "127.0.0.1:0").unwrap();
+    let base = r.url.trim_end_matches('/').to_string();
+
+    let id = post(&format!("{base}/api/conversations"), serde_json::json!({})).unwrap()["id"].as_i64().unwrap();
+    let ev = ndjson(
+        &format!("{base}/api/conversations/{id}/ask"),
+        serde_json::json!({"question": "Can I run a generator in the garage?"}),
+    );
+    assert_eq!(ev[0]["type"], "start");
+    assert_eq!(ev[0]["follow_up"], false);
+    let last = ev.last().unwrap();
+    assert_eq!(last["type"], "final");
+    assert_eq!(last["mode"], "search_only", "no model in tests: library search answers");
+    assert_eq!(last["assessment"]["class"], "verified");
+
+    let ev = ndjson(
+        &format!("{base}/api/conversations/{id}/ask"),
+        serde_json::json!({"question": "What about with the door open?"}),
+    );
+    assert_eq!(ev[0]["follow_up"], true);
+    assert_eq!(ev.last().unwrap()["assessment"]["class"], "verified", "follow-up keeps the generator topic");
+
+    let mem = post(&format!("{base}/api/memories"), serde_json::json!({"text": "We have an Acme GX-2000 generator"}))
+        .unwrap();
+    assert!(mem["id"].as_i64().is_some());
+    assert_eq!(post(&format!("{base}/api/memories"), serde_json::json!({"text": "  "})).unwrap_err(), 400);
+    r.stop();
+    drop(engine);
+
+    // "Restart the app": a new engine on the same data folder.
+    let engine =
+        Arc::new(Engine::open(Root::new(root.path())).unwrap().with_chat(chat::ChatStore::open(data.path()).unwrap()));
+    let r = serve(engine.clone(), "127.0.0.1:0").unwrap();
+    let base = r.url.trim_end_matches('/').to_string();
+    let convs = get(&format!("{base}/api/conversations"));
+    assert_eq!(convs[0]["title"], "Can I run a generator in the garage?");
+    assert_eq!(convs[0]["messages"], 4);
+    let msgs = get(&format!("{base}/api/conversations/{id}"));
+    assert_eq!(msgs[2]["content"], "What about with the door open?");
+    assert_eq!(msgs[3]["meta"]["mode"], "search_only");
+    let mems = get(&format!("{base}/api/memories"));
+    assert_eq!(mems[0]["text"], "We have an Acme GX-2000 generator");
+    let del = ureq::delete(&format!("{base}/api/memories/{}", mems[0]["id"])).call().unwrap();
+    assert_eq!(del.status(), 200);
+    assert!(ureq::get(&format!("{base}/api/conversations/99999")).call().is_err());
+    r.stop();
+}

@@ -71,7 +71,7 @@ jobs:
           cp -R "app/src-tauri/target/release/bundle/macos/Offline Library.app" out/
           cp target/release/kb out/
           codesign --verify --deep "out/Offline Library.app" && echo "ad-hoc signature ok"
-          lipo -archs "out/Offline Library.app/Contents/MacOS/"* out/kb
+          for f in "out/Offline Library.app/Contents/MacOS/"* out/kb; do echo "$f: $(lipo -archs "$f")"; done
           (cd out && zip -qry "../offline-library-${{ matrix.name }}.zip" .)
       - name: Package (Windows)
         if: runner.os == 'Windows'

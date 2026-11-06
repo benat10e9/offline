@@ -131,7 +131,10 @@ def split_passages(text, target=1500, hard=3000):
 
 
 def curl(url, dest):
-    return subprocess.run(["curl", "-L", "--fail", "-sS", "-A", UA, "--retry", "4", "-C", "-", "-o", dest, url]).returncode == 0
+    # Timeouts: a stalled mirror (e.g. the Internet Archive fallback) must fail, not hang the build.
+    return subprocess.run(["curl", "-L", "--fail", "-sS", "-A", UA, "--retry", "4", "-C", "-",
+                           "--connect-timeout", "30", "--speed-time", "120", "--speed-limit", "5000",
+                           "-o", dest, url]).returncode == 0
 
 
 def kiwix_urls():

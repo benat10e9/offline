@@ -169,10 +169,12 @@ function renderAssistant(bubble, v) {
   bubble.append(el("span", { class: `evidence ${v.cls}` }, LABEL_SHORT[v.cls] || v.cls));
   if (v.mode === "answer" && v.text) {
     bubble.append(renderMarkdown(v.text, v.citations, v.consulted));
-  } else if (v.mode === "answer") {
+  } else if (v.mode === "answer" && !v.consulted.length) {
     bubble.append(el("p", {}, "I couldn't answer that from your offline library."));
   } else if (v.consulted.length) {
-    bubble.append(el("p", {}, v.reason ? `The assistant isn't running (${v.reason}). Here is what the library has:` : "Here is what the library has:"));
+    if (v.mode === "answer") v.reason = null;
+    bubble.append(el("p", {}, v.reason ? `The assistant isn't running (${v.reason}). Here is what the library has:`
+      : v.mode === "answer" ? "I couldn't write a reliable answer, but these passages are the closest match:" : "Here is what the library has:"));
     const ul = el("ul", { class: "passages" });
     v.consulted.slice(0, 5).forEach((h) => ul.append(el("li", {},
       el("button", { type: "button", class: "linklike", on: { click: () => openReader(h) } }, h.title),

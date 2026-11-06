@@ -385,6 +385,27 @@ fn uncited_sentences(text: &str) -> Vec<String> {
     out
 }
 
+/// An "answer" that answers nothing: the question repeated back, or too short to state
+/// anything. Citation markers on it must not make it Verified.
+pub fn is_non_answer(question: &str, answer: &str) -> bool {
+    let words = |t: &str| -> Vec<String> {
+        strip_markers(t)
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(String::from)
+            .collect()
+    };
+    let a = words(answer);
+    if a.len() < 4 {
+        return true;
+    }
+    let q: std::collections::HashSet<String> = words(question).into_iter().collect();
+    let novel = a.iter().filter(|w| !q.contains(*w)).count();
+    // Nearly every word comes from the question and it ends as a question.
+    strip_markers(answer).trim_end().ends_with('?') && novel * 5 < a.len()
+}
+
 fn split_sentences(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -543,6 +564,23 @@ pub fn ask_with(
 
     let mut class = assessment.class;
     let mut text = Some(v.text.clone());
+    if is_non_answer(question, &v.text) {
+        // e.g. the model repeated the question with a citation attached: nothing was answered.
+        return Ok(Answer {
+            question: question.into(),
+            class: EvidenceClass::Unsupported,
+            text: None,
+            citations: vec![],
+            consulted: assessment.citable.clone(),
+            notes: {
+                let mut n = notes;
+                n.push("The assistant could not produce an answer from the passages it found. The closest passages are listed below.".into());
+                n
+            },
+            assessment,
+            verification: Some(v),
+        });
+    }
     if v.citations.is_empty() {
         class = EvidenceClass::Unsupported;
         text = None;
@@ -895,6 +933,35 @@ mod tests {
         assert!(!prompt.contains("No [S1]"), "markers from earlier answers are stripped");
         assert_eq!(a.class, EvidenceClass::Verified, "the follow-up retrieved the generator passage");
         assert!(streamed.contains("outdoors"));
+    }
+
+    #[test]
+    fn echoed_question_is_not_an_answer() {
+        let q = "How far away from the house should it be?";
+        assert!(is_non_answer(q, "How far away from the house should it be? [S4]"));
+        assert!(is_non_answer(q, "[S1]"));
+        assert!(!is_non_answer(q, "Keep it at least 20 feet from the house, with the exhaust pointed away [S1]."));
+        assert!(!is_non_answer("Is it safe?", "No. Never run a generator in a garage [S1]."));
+
+        struct Echo;
+        impl ChatModel for Echo {
+            fn chat(&self, _s: &str, _u: &str) -> Result<String, AgentError> {
+                Ok("Can I run my generator in the garage? [S1]".into())
+            }
+        }
+        let (_d, lib, src) = setup();
+        let a = ask(
+            &lib,
+            &src,
+            &Echo,
+            "Can I run my generator in the garage?",
+            &QuestionContext::default(),
+            &AskOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(a.class, EvidenceClass::Unsupported);
+        assert!(a.text.is_none());
+        assert!(!a.consulted.is_empty(), "passages are still offered to the user");
     }
 
     #[test]

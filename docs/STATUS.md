@@ -87,6 +87,12 @@ Findings fixed in this round:
 - llama-server streaming (SSE). Endpoints: /api/conversations, /api/conversations/:id, /api/conversations/:id/ask (NDJSON stream), /api/memories.
 - Not yet: model-suggested memories (deliberately), conversation summarisation for long chats, encrypted portable history.
 
+**Emergency procedures (2026-11-06):** the 10-procedure test on real Qwen3 4B found a dangerous inversion: "place the tourniquet distal to the injury (away from the heart)", citing a real Army passage, labelled Verified. Citations cannot catch an inverted instruction. Decision: emergencies (bleeding/tourniquet, CPR, choking, shock, burns, heat stroke, hypothermia, CO, snakebite, poisoning, seizure, stroke) never go to the model.
+- With a curated **emergency card** (catalog/emergency-cards.json: an exact section of an official source, extracted verbatim by the factory) the card is shown word for word, instantly. First cards: tourniquet (ATP 4-02.11 §4-41), heat stroke (Ready.gov). Each needs clinician sign-off.
+- Without a card: "call 911" and the closest official passages to read directly; no uncurated passage is presented as the answer. (Automatic passage picking was tried and rejected: it chose a dengue table, a pressure-bandage section, MedlinePlus link lists.)
+- Also from that test: two grader patterns too narrow (bleach "scented", CO "open air") fixed and logged.
+- Echoed-question answers are withheld. Backward procedure expansion (a passage starting at "Step 3" gets steps 1-2 prepended).
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)

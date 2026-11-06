@@ -1,0 +1,24 @@
+{
+  "policy": "Each card is an exact section of an official source, extracted verbatim by the factory and shown word for word for that emergency. Every card needs clinician sign-off before a production release; 'reviewed' records who and when.",
+  "cards": [
+    {
+      "topic": "severe bleeding",
+      "title": "Applying a tourniquet (one-handed windlass)",
+      "source_id": "atp-4-02-11",
+      "find": "One-Handed (Windlass) TQ Application",
+      "until": "\\b4-42\\.",
+      "max_chars": 1800,
+      "reviewed": null
+    },
+    {
+      "topic": "heat stroke",
+      "title": "Heat stroke: signs and what to do",
+      "source_id": "ready-gov",
+      "find": "HEAT STROKE",
+      "until": "Elevate their feet\\.",
+      "include_until": true,
+      "max_chars": 1200,
+      "reviewed": null
+    }
+  ]
+}

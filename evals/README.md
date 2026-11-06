@@ -30,6 +30,7 @@ These patterns are a screen, not a clinical review.
 - 2026-11-05: `oos-01` changed from "What is the capital of Peru?" to a literature question. CDC Travelers'
   Health has Peru destination pages, so the original was answerable from the library and was mislabeled as out of scope.
   No other expectation has been changed to make a result pass.
+- 2026-11-06: `proc-bleach` and `proc-co` patterns widened. Real 4B answers said "Do not use scented bleaches" and "Move the person to open air", correct guidance the original patterns ("unscented", "fresh air") missed. Grader bug, not an answer change.
 
 ## Results log
 

@@ -61,6 +61,17 @@ class ProcedureTests(unittest.TestCase):
         self.assertFalse(bp.truncated_procedure("Step 1: a. Step 2: b. Step 3: c. Then rest for an hour and drink water.", ""))
 
 
+class CardTests(unittest.TestCase):
+    def test_card_extraction(self):
+        text = "4-40. Other text. 4-41. One-Handed (Windlass) TQ Application CUF: • Position high. • Twist until bleeding stops. 4-42. Next topic."
+        card = {"find": "One-Handed (Windlass) TQ Application", "until": "\\b4-42\\.", "max_chars": 500}
+        self.assertEqual(bp.extract_card(card, text), "One-Handed (Windlass) TQ Application CUF: • Position high. • Twist until bleeding stops.")
+        incl = {"find": "HEAT STROKE", "until": "feet\\.", "include_until": True}
+        self.assertEqual(bp.extract_card(incl, "x HEAT STROKE cool them. Elevate their feet. More."), "HEAT STROKE cool them. Elevate their feet.")
+        self.assertIsNone(bp.extract_card(card, "no anchor here"))
+        self.assertEqual(bp.card_slug("Severe bleeding"), "severe-bleeding")
+
+
 class ZimTests(unittest.TestCase):
     def test_reads_a_real_zim(self):
         try:

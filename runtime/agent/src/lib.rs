@@ -168,6 +168,213 @@ professional and tell the user to get medical help; do not present those steps a
 (7) When the passages describe a procedure, give every step, in order, as a numbered list (1., 2., 3.), with \
 its warnings. Never stop partway through a procedure.";
 
+/// Emergency topics: procedures are shown word for word from the source, never paraphrased
+/// by the model. A 4B model inverted tourniquet placement ("distal to the injury") while
+/// citing a real passage; citations cannot catch an inversion. (topic, pattern, call 911)
+pub const EMERGENCY_TOPICS: &[(&str, &str, bool)] = &[
+    (
+        "severe bleeding",
+        r"(?i)\btourniquet|severe(ly)? bleed|bleeding (badly|heavily|a lot|won't stop)|stop (the )?bleeding|hemorrhag",
+        true,
+    ),
+    ("cardiac arrest", r"(?i)\bcpr\b|not breathing|no pulse|rescue breath|chest compression|cardiac arrest", true),
+    ("choking", r"(?i)chok(e|ing)|heimlich|abdominal thrust|airway (is )?blocked", true),
+    ("shock", r"(?i)\b(in|into|for|treat(ing)?) shock\b|signs of shock|going into shock", true),
+    ("burns", r"(?i)\bburn(s|ed)?\b", false),
+    ("heat stroke", r"(?i)heat ?stroke|heat exhaustion", true),
+    ("hypothermia", r"(?i)hypotherm|frostbite", true),
+    ("carbon monoxide", r"(?i)carbon monoxide|\bco poisoning", true),
+    ("snakebite", r"(?i)snake ?bite|bitten by a snake|venom", true),
+    ("poisoning", r"(?i)poison(ed|ing)|swallowed (bleach|chemicals?|medicine|pills)|overdose", true),
+    ("seizure", r"(?i)seizure|convuls", true),
+    ("stroke", r"(?i)\bhaving a stroke|signs of (a )?stroke|\bstroke symptoms", true),
+];
+
+/// The emergency topic a question is about, if any.
+pub fn emergency_topic(question: &str) -> Option<(&'static str, bool)> {
+    static NOT_INJURY: OnceLock<Regex> = OnceLock::new();
+    let not_injury = NOT_INJURY.get_or_init(|| {
+        Regex::new(r"(?i)\bburn (ban|permit|pile|barrel|season)|outdoor burning").expect("valid regex")
+    });
+    if not_injury.is_match(question) && !question.to_lowercase().contains("burned") {
+        return None;
+    }
+    static RES: OnceLock<Vec<(&'static str, Regex, bool)>> = OnceLock::new();
+    RES.get_or_init(|| EMERGENCY_TOPICS.iter().map(|(t, p, c)| (*t, Regex::new(p).expect("valid regex"), *c)).collect())
+        .iter()
+        .find(|(_, re, _)| re.is_match(question))
+        .map(|(t, _, c)| (*t, *c))
+}
+
+/// A directory of links (MedlinePlus topic pages: "Videos and Tutorials … (American Red
+/// Cross) … PDF") rather than instructions.
+fn is_link_list(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if lines.len() < 4 {
+        return false;
+    }
+    let short = lines.iter().filter(|l| l.split_whitespace().count() <= 6).count();
+    let refs = lines.iter().filter(|l| l.contains("PDF") || (l.starts_with('(') && l.ends_with(')'))).count();
+    short * 10 >= lines.len() * 6 && refs >= 1
+}
+
+/// How often the question's most distinctive word occurs in the passage.
+fn topic_mentions(question: &str, text: &str, library: &Library, package: &str) -> usize {
+    let terms = kb_evidence::content_terms(question);
+    let Some((word, stem)) =
+        terms.iter().max_by(|a, b| library.idf_in(package, &a.0).total_cmp(&library.idf_in(package, &b.0)))
+    else {
+        return 0;
+    };
+    let lower = text.to_lowercase();
+    lower.matches(word.as_str()).count().max(lower.matches(stem.as_str()).count())
+}
+
+fn procedure_markers(text: &str) -> usize {
+    text.matches('•').count()
+        + text.lines().filter(|l| l.trim_start().starts_with("- ")).count()
+        + max_step(text) as usize
+}
+
+/// Emergency answer without the model: the best one or two official/government procedure
+/// passages, verbatim, each followed by its citation marker.
+fn rank_emergency_passages(
+    library: &Library,
+    sources: &dyn SourceLookup,
+    question: &str,
+    assessment: &Assessment,
+) -> Vec<(usize, Hit)> {
+    // Consumer instructions: verified, public-audience passages first (a clinician guide's
+    // dengue table mentioning a "tourniquet test" is not tourniquet instructions).
+    let public = |h: &Hit| !sources.source(&h.package_id, &h.source_id).is_some_and(|s| s.for_clinicians());
+    let pick = |verified_only: bool, public_only: bool| -> Vec<(usize, Hit)> {
+        assessment
+            .citable
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| !verified_only || assessment.verified_keys.contains(&h.citation_key()))
+            .filter(|(_, h)| !public_only || public(h))
+            .map(|(i, h)| (i, h.clone()))
+            .collect()
+    };
+    let mut ranked = pick(true, true);
+    if ranked.is_empty() {
+        ranked = pick(false, true);
+    }
+    if ranked.is_empty() {
+        ranked = pick(false, false);
+    }
+    // Prefer a procedure that starts at its first step, then passages that lay out steps;
+    // keep retrieval order otherwise. Never lead with a fragment ("Step 3: …").
+    static STEP_ONE: OnceLock<Regex> = OnceLock::new();
+    let step_one = STEP_ONE.get_or_init(|| Regex::new(r"(?i)\bstep\s*1\b|(?m)^\s*1[.)]\s").expect("valid regex"));
+    // Order: how well the passage matches the question (in tenths), then whether it is a
+    // fragment, then how clearly it lays out steps, then retrieval order.
+    // Order: not a link directory; how well it matches (in tenths); how often the topic word
+    // recurs; not a fragment; how clearly it lays out steps; retrieval order.
+    ranked.sort_by_key(|(i, h)| {
+        let rel = (kb_evidence::relevance(question, h, library) * 10.0).round() as i32;
+        let fragment = max_step(&h.text) > 0 && !step_one.is_match(&h.text);
+        (
+            is_link_list(&h.text),
+            std::cmp::Reverse(rel),
+            std::cmp::Reverse(topic_mentions(question, &h.text, library, &h.package_id).min(8)),
+            fragment,
+            std::cmp::Reverse(procedure_markers(&h.text).min(6)),
+            *i,
+        )
+    });
+    // Drop passages already contained in a better one (procedure expansion joins neighbours).
+    let mut chosen: Vec<(usize, Hit)> = Vec::new();
+    for (i, h) in ranked {
+        let body = h.text.trim().to_string();
+        if chosen.iter().any(|(_, c)| c.text.contains(&body) || body.contains(c.text.trim())) {
+            continue;
+        }
+        chosen.push((i, h));
+        if chosen.len() == 5 {
+            break;
+        }
+    }
+    chosen
+}
+
+pub fn card_slug(topic: &str) -> String {
+    topic
+        .to_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Emergency answer without the model. A curated card (an exact, reviewed section of an
+/// official source) is shown verbatim. Without one, the user gets "call 911" and the closest
+/// official passages to read directly; no single uncurated passage is presented as the answer.
+#[allow(clippy::too_many_arguments)]
+fn emergency_answer(
+    library: &Library,
+    sources: &dyn SourceLookup,
+    question: &str,
+    topic_q: &str,
+    topic: &str,
+    call_911: bool,
+    assessment: Assessment,
+    mut notes: Vec<String>,
+) -> Answer {
+    if call_911 {
+        notes.insert(0, "If this is happening now, call 911 or your local emergency number first.".into());
+    }
+    let card_id = format!("card:{}", card_slug(topic));
+    let card = library.package_ids().into_iter().find_map(|p| library.get(&p, &card_id).ok().flatten());
+    if let Some(card) = card {
+        let authoritative = sources.source(&card.package_id, &card.source_id).is_some_and(|s| {
+            matches!(s.authority, kb_packages::Authority::Official | kb_packages::Authority::Government)
+        });
+        let source_title =
+            sources.source(&card.package_id, &card.source_id).map(|s| s.title.clone()).unwrap_or_default();
+        notes.push(format!("Emergency card: the exact text of {source_title}, not rewritten by the AI. Not yet clinically reviewed for this product."));
+        let mut consulted = vec![card.clone()];
+        consulted.extend(assessment.citable.iter().filter(|h| h.passage_id != card.passage_id).cloned());
+        return Answer {
+            question: question.into(),
+            class: if authoritative { EvidenceClass::Verified } else { EvidenceClass::Partial },
+            // Same words as the source; only inline bullets ("… • …") are laid out as a list.
+            text: Some(format!(
+                "**{}**\n\n{} [S1]",
+                card.title,
+                card.text.trim().replace(" • ", "\n- ").replace("• ", "\n- ")
+            )),
+            citations: vec![Citation {
+                marker: 1,
+                citation_key: card.citation_key(),
+                package_id: card.package_id.clone(),
+                passage_id: card.passage_id.clone(),
+                doc_id: card.doc_id.clone(),
+                title: card.title.clone(),
+            }],
+            consulted,
+            notes,
+            assessment,
+            verification: None,
+        };
+    }
+    let ranked = rank_emergency_passages(library, sources, topic_q, &assessment);
+    notes.push(format!(
+        "No reviewed emergency card for {topic} is installed yet, so the assistant will not summarize this. Read the official passages below directly."
+    ));
+    Answer {
+        question: question.into(),
+        class: if ranked.is_empty() { EvidenceClass::Unsupported } else { EvidenceClass::Partial },
+        text: None,
+        citations: vec![],
+        consulted: ranked.into_iter().map(|(_, h)| h).collect(),
+        notes,
+        assessment,
+        verification: None,
+    }
+}
+
 fn step_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?i)\bstep\s*(\d{1,2})\b|(?m)^\s*(\d{1,2})[.)]\s").expect("valid regex"))
@@ -183,6 +390,16 @@ pub fn max_step(text: &str) -> u32 {
         .unwrap_or(0)
 }
 
+/// Lowest step number in a text, 0 if none.
+pub fn min_step(text: &str) -> u32 {
+    step_re()
+        .captures_iter(text)
+        .filter_map(|c| c.get(1).or(c.get(2)).and_then(|m| m.as_str().parse::<u32>().ok()))
+        .filter(|n| *n <= 30)
+        .min()
+        .unwrap_or(0)
+}
+
 /// Procedures split across page breaks: when a passage contains numbered steps, attach
 /// the following passage(s) of the same document (up to two) so the model sees the
 /// whole procedure rather than a fragment that ends at "Step 2".
@@ -193,6 +410,14 @@ pub fn expand_procedures(library: &Library, hits: &mut [Hit]) {
         }
         let Ok(doc) = library.document(&h.package_id, &h.doc_id) else { continue };
         let Some(pos) = doc.iter().position(|p| p.passage_id == h.passage_id) else { continue };
+        // Starts mid-procedure ("Step 3: …")? Prepend the earlier steps from the previous passage.
+        let first = min_step(&h.text);
+        if first > 1 && pos > 0 {
+            let prev = &doc[pos - 1];
+            if max_step(&prev.text) > 0 && max_step(&prev.text) < first {
+                h.text = format!("{}\n\n{}", prev.text.trim(), h.text);
+            }
+        }
         let mut last = max_step(&h.text);
         for next in doc.iter().skip(pos + 1).take(2) {
             let n = max_step(&next.text);
@@ -470,11 +695,13 @@ pub struct Answer {
 pub struct AskOptions {
     pub retrieve: usize,
     pub max_passages: usize,
+    /// Show emergency procedures verbatim instead of asking the model (default on).
+    pub extractive_emergencies: bool,
 }
 
 impl Default for AskOptions {
     fn default() -> Self {
-        Self { retrieve: 40, max_passages: 8 }
+        Self { retrieve: 40, max_passages: 8, extractive_emergencies: true }
     }
 }
 
@@ -558,6 +785,11 @@ pub fn ask_with(
         });
     }
 
+    // Emergencies: official text verbatim, no model (instant, and nothing can be inverted).
+    let topic_q = turn.topic_text.as_deref().map(|t| format!("{t} {question}")).unwrap_or_else(|| question.to_string());
+    if let Some((topic, call_911)) = emergency_topic(&topic_q).filter(|_| opts.extractive_emergencies) {
+        return Ok(emergency_answer(library, sources, question, &topic_q, topic, call_911, assessment, notes));
+    }
     let prompt = build_context(turn) + &build_prompt(question, &assessment, sources);
     let raw = model.chat_stream(SYSTEM_PROMPT, &prompt, on_token)?;
     let v = verify_citations(&raw, &assessment.citable);
@@ -874,11 +1106,13 @@ mod tests {
         let q = "How do I apply a tourniquet?";
 
         // The model only gives the first two steps (what happened on the Intel Mac test).
+        // Model path (emergency mode off) to exercise the completeness check itself.
+        let opts = AskOptions { extractive_emergencies: false, ..AskOptions::default() };
         let partial = Capture(
             std::sync::Mutex::new(String::new()),
             "1. Place it high on the limb [S1].\n2. Pull the strap through the buckle [S1].",
         );
-        let a = ask(&lib, &src, &partial, q, &QuestionContext::default(), &AskOptions::default()).unwrap();
+        let a = ask(&lib, &src, &partial, q, &QuestionContext::default(), &opts).unwrap();
         assert!(
             partial.0.lock().unwrap().contains("Step 4: Lock the windlass"),
             "continuation passage reaches the model"
@@ -891,7 +1125,7 @@ mod tests {
             std::sync::Mutex::new(String::new()),
             "1. Place it high on the limb [S1].\n2. Pull the strap through the buckle [S1].\n3. Twist the windlass until bleeding stops [S1].\n4. Lock it and note the time [S1].",
         );
-        let a = ask(&lib, &src, &full, q, &QuestionContext::default(), &AskOptions::default()).unwrap();
+        let a = ask(&lib, &src, &full, q, &QuestionContext::default(), &opts).unwrap();
         assert_eq!(a.class, EvidenceClass::Verified);
     }
 
@@ -933,6 +1167,86 @@ mod tests {
         assert!(!prompt.contains("No [S1]"), "markers from earlier answers are stripped");
         assert_eq!(a.class, EvidenceClass::Verified, "the follow-up retrieved the generator passage");
         assert!(streamed.contains("outdoors"));
+    }
+
+    struct Panics;
+    impl ChatModel for Panics {
+        fn chat(&self, _s: &str, _u: &str) -> Result<String, AgentError> {
+            panic!("the model must not paraphrase an emergency procedure")
+        }
+    }
+
+    #[test]
+    fn emergency_without_card_lists_passages_and_never_calls_the_model() {
+        let (_d, lib, src) = procedure_library();
+        let a = ask(
+            &lib,
+            &src,
+            &Panics,
+            "How do I apply a tourniquet?",
+            &QuestionContext::default(),
+            &AskOptions::default(),
+        )
+        .unwrap();
+        assert!(a.text.is_none(), "no uncurated passage is presented as the answer");
+        assert_eq!(a.class, EvidenceClass::Partial);
+        assert!(!a.consulted.is_empty());
+        assert!(a.notes[0].contains("call 911"));
+        assert!(a.notes.iter().any(|n| n.contains("No reviewed emergency card")));
+
+        assert_eq!(emergency_topic("Someone is choking, what do I do?").map(|t| t.0), Some("choking"));
+        assert_eq!(emergency_topic("What are signs of heat stroke?").map(|t| t.0), Some("heat stroke"));
+        assert_eq!(emergency_topic("How do I treat a burn on my arm?").map(|t| t.0), Some("burns"));
+        assert!(emergency_topic("Is there a burn ban in my county?").is_none());
+        assert!(emergency_topic("Can I do outdoor burning of brush?").is_none());
+        assert!(emergency_topic("How do I purify river water?").is_none());
+        assert!(emergency_topic("Can I run a generator in my garage?").is_none());
+    }
+
+    #[test]
+    fn emergency_card_is_shown_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let card_text = "One-Handed (Windlass) TQ Application: Position the tourniquet high on the limb. Twist the rod until bleeding has stopped. Lock the windlass.";
+        kb_retrieval::build_index(
+            dir.path(),
+            &[
+                kb_retrieval::Passage {
+                    passage_id: "card:severe-bleeding".into(),
+                    doc_id: "card:severe-bleeding".into(),
+                    source_id: "cert".into(),
+                    title: "Applying a tourniquet".into(),
+                    heading: String::new(),
+                    text: card_text.into(),
+                },
+                kb_retrieval::Passage {
+                    passage_id: "x1".into(),
+                    doc_id: "x".into(),
+                    source_id: "cert".into(),
+                    title: "Bleeding".into(),
+                    heading: String::new(),
+                    text: "Apply a tourniquet for severe bleeding from a limb when pressure fails.".into(),
+                },
+            ],
+        )
+        .unwrap();
+        let mut lib = Library::new();
+        lib.mount("pkg", dir.path()).unwrap();
+        let (_d2, _l2, src) = procedure_library();
+        let a = ask(
+            &lib,
+            &src,
+            &Panics,
+            "How do I apply a tourniquet?",
+            &QuestionContext::default(),
+            &AskOptions::default(),
+        )
+        .unwrap();
+        let text = a.text.unwrap();
+        assert!(text.contains(card_text), "card text verbatim: {text}");
+        assert_eq!(a.citations[0].passage_id, "card:severe-bleeding");
+        assert_eq!(a.consulted[0].passage_id, "card:severe-bleeding");
+        assert_eq!(a.class, EvidenceClass::Verified);
+        assert!(a.notes.iter().any(|n| n.contains("Emergency card")));
     }
 
     #[test]

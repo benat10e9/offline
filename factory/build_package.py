@@ -250,6 +250,23 @@ def truncated_procedure(text, next_text):
     return bool(tail) and len(after) < 300 and bool(FOOTER_RE.search(after)) and not continues
 
 
+def extract_card(card, text):
+    """The exact section of `text` a card names: from `find` to `until` (regex), capped."""
+    start = text.find(card["find"])
+    if start < 0:
+        return None
+    rest = text[start:]
+    m = re.search(card["until"], rest[len(card["find"]):]) if card.get("until") else None
+    end = len(rest)
+    if m:
+        end = len(card["find"]) + (m.end() if card.get("include_until") else m.start())
+    return rest[: min(end, card.get("max_chars", 2000))].strip()
+
+
+def card_slug(topic):
+    return re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")
+
+
 def doc_id(source_id, key):
     return f"{source_id}:{hashlib.sha1(key.encode()).hexdigest()[:12]}"
 
@@ -276,6 +293,9 @@ def main():
     urls = kiwix_urls() if any(s["kind"] == "zim" for s in sources) else {}
 
     records, report = [], {"package": cat["package"], "sources": {}, "failed": {}}
+    cards_path = os.path.join(os.path.dirname(os.path.abspath(args.catalog)), "..", "emergency-cards.json")
+    cards = json.load(open(cards_path))["cards"] if os.path.exists(cards_path) else []
+    report["emergency_cards"] = {}
     seen_text = set()
     with open(os.path.join(args.out, "passages.jsonl"), "w") as out:
         for src in sources:
@@ -303,6 +323,17 @@ def main():
             for title, key, text in docs:
                 if args.max_docs and ndocs >= args.max_docs:
                     break
+                for card in [c for c in cards if c["source_id"] == src["id"]]:
+                    if card_slug(card["topic"]) in report["emergency_cards"]:
+                        continue
+                    body = extract_card(card, text)
+                    if body:
+                        slug = card_slug(card["topic"])
+                        out.write(json.dumps({
+                            "passage_id": f"card:{slug}", "doc_id": f"card:{slug}", "source_id": src["id"],
+                            "title": card["title"], "heading": src["title"], "text": body,
+                        }, ensure_ascii=False) + "\n")
+                        report["emergency_cards"][slug] = {"source": src["id"], "chars": len(body), "reviewed": card.get("reviewed")}
                 did = doc_id(src["id"], key)
                 ndocs += 1
                 parts = split_passages(text)
@@ -353,6 +384,11 @@ def main():
     print(json.dumps(report, indent=1))
     if not records:
         sys.exit("no sources built")
+    missing_cards = [c["topic"] for c in cards if any(s["id"] == c["source_id"] for s in sources)
+                     and card_slug(c["topic"]) not in report["emergency_cards"]]
+    if missing_cards:
+        report["failed"]["emergency_cards"] = f"anchors not found for: {missing_cards}"
+        print(f"   FAILED emergency cards: {missing_cards}", flush=True)
     if args.require_all and report["failed"]:
         sys.exit(f"sources failed: {sorted(report['failed'])}")
 

@@ -534,12 +534,15 @@ fn main() -> Result<()> {
                     x.top_sources.iter().take(3).cloned().collect::<Vec<_>>().join(","),
                     if x.violations.is_empty() { String::new() } else { format!("  UNSAFE: {:?}", x.violations) }
                 );
+                if !x.missing.is_empty() {
+                    println!("      INCOMPLETE, missing: {:?}", x.missing);
+                }
             }
             let s = &r.summary;
             println!(
-                "\nclass ok {}/{}  sources {}/{}  out-of-scope wrongly verified {}  withheld {}/{}  unsafe {}  mean {:.2}s",
+                "\nclass ok {}/{}  sources {}/{}  out-of-scope wrongly verified {}  withheld {}/{}  unsafe {}  incomplete {}  mean {:.2}s",
                 s.class_ok, s.items, s.source_hits, s.source_expectations, s.out_of_scope_wrongly_verified,
-                s.answers_withheld, s.model_graded, s.safety_violations, s.mean_seconds
+                s.answers_withheld, s.model_graded, s.safety_violations, s.incomplete_answers, s.mean_seconds
             );
             if strict && (s.out_of_scope_wrongly_verified > 0 || s.safety_violations > 0) {
                 std::process::exit(3);

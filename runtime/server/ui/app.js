@@ -130,7 +130,7 @@ function renderSources(hits, card, heading, withPreview) {
     if (withPreview) item.append(el("p", { class: "passage-preview" }, h.text.slice(0, 260) + (h.text.length > 260 ? "…" : "")));
     list.append(item);
   });
-  card.append(el("div", { class: "sources" }, el("h3", {}, heading), list));
+  card.append(el("div", { class: "sources" }, heading ? el("h3", {}, heading) : null, list));
 }
 
 function renderNotes(notes, card) {
@@ -151,8 +151,21 @@ function renderResponse(card, data) {
     const cited = a.citations.map((c) => a.consulted[c.marker - 1]).filter(Boolean);
     card.append(bandFor(a.class, cited));
     renderNotes(a.notes, card);
-    if (a.text) renderAnswerText(a.text, a.citations, a.consulted, card);
-    renderSources(a.consulted, card, a.text ? "Sources consulted" : "Closest passages in the library", !a.text);
+    if (a.text) {
+      renderAnswerText(a.text, a.citations, a.consulted, card);
+      // Show what the answer actually cites; everything else checked stays out of the way.
+      const citedIdx = new Set(a.citations.map((c) => c.marker - 1));
+      const cited = a.consulted.filter((_, i) => citedIdx.has(i));
+      const others = a.consulted.filter((_, i) => !citedIdx.has(i));
+      renderSources(cited, card, "Sources cited", false);
+      if (others.length) {
+        const holder = el("details", { class: "sources other" }, el("summary", {}, `Other passages checked (${others.length})`));
+        card.append(holder);
+        renderSources(others, holder, "", false);
+      }
+    } else {
+      renderSources(a.consulted, card, "Closest passages in the library", true);
+    }
   } else {
     const s = data.assessment;
     const reason = data.status && (data.status.reason || data.status.error);

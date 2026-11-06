@@ -142,7 +142,13 @@
       "publisher": "FEMA",
       "license": "LicenseRef-PublicDomain-USGov",
       "authority": "government",
-      "url": "https://www.ready.gov/sites/default/files/2019.CERT_.Basic_.PM_FINAL_508c.pdf"
+      "url": "https://www.ready.gov/sites/default/files/2019.CERT_.Basic_.PM_FINAL_508c.pdf",
+      "exclude_passages": [
+        {
+          "pattern": "(?i)How to use a tourniquet:\\s*Step 1",
+          "reason": "Truncated procedure: steps after 'Step 2' are in a figure that PDF text extraction does not capture. Answers came out as an incomplete two-step tourniquet procedure (physical USB test, 2026-11-06). ATP 4-02.11 covers the full procedure."
+        }
+      ]
     }
   ],
   "excluded": [

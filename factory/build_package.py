@@ -230,6 +230,23 @@ def zim_docs(path, skip, errors=None):
                 print(f"    skipped entry {i}: {exc!r}", file=sys.stderr)
 
 
+STEP_RE = re.compile(r"(?i)\bstep\s*(\d{1,2})\b")
+FOOTER_RE = re.compile(r"(?i)\b(page\s+\d+(-\d+)?|(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})\b")
+
+
+def truncated_procedure(text, next_text):
+    """A numbered procedure that stops at a page footer and does not continue in the next
+    passage: the remaining steps are probably in a figure the PDF text does not contain."""
+    steps = [int(m.group(1)) for m in STEP_RE.finditer(text)]
+    if not steps:
+        return False
+    tail = text[STEP_RE.finditer(text).__next__().start():]
+    last = list(STEP_RE.finditer(text))[-1]
+    after = text[last.end():]
+    continues = any(int(m.group(1)) == max(steps) + 1 for m in STEP_RE.finditer(next_text or ""))
+    return bool(tail) and len(after) < 300 and bool(FOOTER_RE.search(after)) and not continues
+
+
 def doc_id(source_id, key):
     return f"{source_id}:{hashlib.sha1(key.encode()).hexdigest()[:12]}"
 
@@ -285,7 +302,13 @@ def main():
                     break
                 did = doc_id(src["id"], key)
                 ndocs += 1
-                for n, (heading, ptxt) in enumerate(split_passages(text)):
+                parts = split_passages(text)
+                for i, (heading, ptxt) in enumerate(parts):
+                    nxt = parts[i + 1][1] if i + 1 < len(parts) else ""
+                    if truncated_procedure(ptxt, nxt):
+                        report.setdefault("review_truncated_procedures", []).append(
+                            {"source": src["id"], "title": title, "text_start": ptxt[:160]})
+                for n, (heading, ptxt) in enumerate(parts):
                     rule = next((r for r in rules if r[0].search(ptxt)), None)
                     if rule:  # curated out, with the reason recorded in the report
                         excluded[rule[1]] = excluded.get(rule[1], 0) + 1

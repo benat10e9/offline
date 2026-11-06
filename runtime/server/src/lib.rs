@@ -564,22 +564,46 @@ pub fn bench(root: &Root, only: Option<&str>, allow_unevaluated: bool) -> anyhow
         let engine = Engine::open(root.clone())?;
         report.packages = engine.packages.clone();
         let t = Instant::now();
+        let started = Instant::now();
+        eprintln!("[{id}] loading model (Intel CPUs: up to a minute)...");
         engine.start_model(&EngineOptions { allow_unevaluated, force_model: Some(id.clone()), ..Default::default() });
         let load_seconds = t.elapsed().as_secs_f64();
+        eprintln!("[{id}] model ready in {load_seconds:.1}s. Speed test 1/2...");
         let status = engine.model_status();
         let mut run =
             BenchRun { model: id, backend: None, load_seconds, status: status.clone(), raw: vec![], answers: vec![] };
         if let ModelStatus::Ready { backend, .. } = &status {
             run.backend = Some(backend.clone());
-            for _ in 0..2 {
+            for i in 0..2 {
                 if let Some((Ok(stats), _)) = engine.with_model(|url| {
                     LlamaServer::new(url).chat_with_stats("You are a concise assistant.", BENCH_RAW_PROMPT)
                 }) {
+                    eprintln!(
+                        "[{}] speed test {}/2: {:.1} tokens/s generated ({:.0}s, {:.0}s elapsed)",
+                        run.model,
+                        i + 1,
+                        stats.generated_tokens_per_second.unwrap_or(0.0),
+                        stats.wall_seconds,
+                        started.elapsed().as_secs_f64()
+                    );
                     run.raw.push(stats);
                 }
             }
-            for q in BENCH_QUESTIONS {
+            for (qi, q) in BENCH_QUESTIONS.iter().enumerate() {
                 let t = Instant::now();
+                let done: f64 = run.answers.iter().map(|a| a.seconds).sum();
+                let eta = if qi == 0 {
+                    String::new()
+                } else {
+                    format!(", about {:.0}s left", done / qi as f64 * (BENCH_QUESTIONS.len() - qi) as f64)
+                };
+                eprintln!(
+                    "[{}] question {}/{}: {q} ({:.0}s elapsed{eta})",
+                    run.model,
+                    qi + 1,
+                    BENCH_QUESTIONS.len(),
+                    started.elapsed().as_secs_f64()
+                );
                 let req = QuestionRequest { question: q.to_string(), asset: None, jurisdiction: None };
                 if let Ok(AskResponse::Answer { answer, .. }) = engine.ask(&req) {
                     run.answers.push(BenchAnswer {

@@ -19,6 +19,12 @@ the first run calibrates them. A passing eval is a release gate, not proof of sa
 snakebite, chest wound, rabies, insulin, triage) and 5 traps (Python, an uninstalled generator manual, Texas
 handgun law, child antibiotic dosing, adult acetaminophen). Same items and expectations, not new questions.
 
+`procedures.jsonl` — 10 step-by-step emergency procedures (tourniquet, bleach, boiling, burns, shock, heat stroke,
+hypothermia, carbon monoxide, choking, snakebite). `must_include` lists the critical elements an answer must
+contain (from CDC, FEMA, Red Cross-aligned U.S. government guidance in the library); a missing element is reported as
+an incomplete answer. Added after the physical USB test, where a tourniquet answer stopped at step 2 of the procedure.
+These patterns are a screen, not a clinical review.
+
 ## Changes
 
 - 2026-11-05: `oos-01` changed from "What is the capital of Peru?" to a literature question. CDC Travelers'

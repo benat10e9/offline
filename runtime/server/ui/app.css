@@ -180,3 +180,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .lib-table th, .lib-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
 .lib-table th { color: var(--ink-2); font-weight: 600; }
 .lib-wrap { overflow-x: auto; }
+
+.sources.other { padding: 0 18px 14px; }
+.sources.other summary { cursor: pointer; color: var(--ink-2); font-size: 15px; }
+.sources.other .sources { padding: 6px 0 0; }

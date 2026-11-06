@@ -71,6 +71,15 @@ Last updated: 2026-11-05 (session 3, part 2)
 - Store (`commerce/`, Next.js 16.4.2): editions, configurator (OS, model, state, equipment, grades, delivery), accounts, Stripe Checkout + webhook (needs keys) or simulated test payment, portal with build status and signed profile downloads, configuration changes → new profile version, factory queue API. Unit tests and a scripted end-to-end journey pass locally.
 - `journey` workflow: store journey → drive from profile v1 → network namespace with no network → real 4B answers, search, routing → profile v2 rebuild removes the Texas map.
 
+**Physical USB test (2026-11-06), Intel MacBook Pro, SanDisk Ultra 32 GB exFAT, Wi-Fi off:** app launched from the drive, 4B model on CPU, four answers averaging ~27 s, citations open the source passage, Austin→Houston route 163 mi / 2 h 40 min. **Passed.**
+Findings fixed in this round:
+- Tourniquet answer stopped at step 2 and was labelled Verified. Root cause: in the CERT manual the remaining steps are in a figure that PDF text extraction does not capture. That passage is now excluded (reason recorded) and ATP 4-02.11's complete procedure answers instead. The factory now flags any procedure that ends at a page footer (`review_truncated_procedures` in the build report).
+- Procedures split across passages are joined (next passages of the same document, up to two). Deterministic completeness check: if cited sources number steps to N and the answer stops earlier, the answer cannot be Verified and the user is told to open the source.
+- Prompt requires full numbered steps for procedures. 8 passages again (accuracy over speed).
+- UI shows only cited sources; other passages checked are collapsed.
+- `kb bench` prints progress, elapsed time and time remaining.
+- `evals/procedures.jsonl`: 10 emergency procedures with required elements (`must_include`); eval reports incomplete answers.
+
 **Measured:** desktop app + kb tool download = 9 MB (macOS arm64), 10 MB (Linux). llama.cpp b11747: 16 MB (macOS), 36 MB (Windows Vulkan).
 
 ## Not yet verified on real hardware (by design, per Ben)

@@ -17,6 +17,9 @@ pub struct EvalItem {
     pub expect_sources: Vec<String>,
     #[serde(default)]
     pub must_not: Vec<String>,
+    /// Patterns a generated answer must contain (critical steps of a procedure).
+    #[serde(default)]
+    pub must_include: Vec<String>,
     #[serde(default)]
     pub asset: Option<String>,
     #[serde(default)]
@@ -84,6 +87,8 @@ pub struct EvalResult {
     /// Banned patterns that appeared only inside a negation ("do not cut the bite"):
     /// correct advice, reported for transparency, not counted as violations.
     pub negated_matches: Vec<String>,
+    /// `must_include` patterns missing from a generated answer.
+    pub missing: Vec<String>,
     pub seconds: f64,
     pub answer: Option<String>,
     /// The passages the answer cites, as (marker, title, text), for human review of
@@ -110,6 +115,8 @@ pub struct EvalSummary {
     pub model_graded: usize,
     pub answers_withheld: usize,
     pub safety_violations: usize,
+    /// Generated answers missing at least one critical element.
+    pub incomplete_answers: usize,
     pub mean_seconds: f64,
 }
 
@@ -178,7 +185,15 @@ pub fn run_with_progress(
             (!it.expect_sources.is_empty()).then(|| top_sources.iter().any(|s| it.expect_sources.contains(s)));
         let mut violations = Vec::new();
         let mut negated_matches = Vec::new();
+        let mut missing = Vec::new();
         if let Some(text) = &answer {
+            for pat in &it.must_include {
+                match regex::Regex::new(pat) {
+                    Ok(re) if re.is_match(text) => {}
+                    Ok(_) => missing.push(pat.clone()),
+                    Err(e) => missing.push(format!("bad pattern {pat}: {e}")),
+                }
+            }
             for pat in &it.must_not {
                 match regex::Regex::new(pat) {
                     Ok(re) => match classify_match(&re, text) {
@@ -201,6 +216,7 @@ pub fn run_with_progress(
             citations,
             violations,
             negated_matches,
+            missing,
             seconds,
             answer,
             cited,
@@ -229,6 +245,7 @@ pub fn summarize(results: Vec<EvalResult>, items: &[EvalItem]) -> EvalReport {
         model_graded: results.iter().filter(|r| r.answered.is_some()).count(),
         answers_withheld: results.iter().filter(|r| r.answered == Some(false)).count(),
         safety_violations: results.iter().map(|r| r.violations.len()).sum(),
+        incomplete_answers: results.iter().filter(|r| !r.missing.is_empty()).count(),
         mean_seconds: results.iter().map(|r| r.seconds).sum::<f64>() / results.len().max(1) as f64,
     };
     EvalReport { summary, results }
@@ -279,6 +296,13 @@ mod tests {
         let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../evals/medical-survival.jsonl");
         let items = load_items(&p).unwrap();
         assert_eq!(items.len(), 50);
+        let procs = load_items(&p.with_file_name("procedures.jsonl")).unwrap();
+        assert_eq!(procs.len(), 10);
+        for it in &procs {
+            for pat in it.must_include.iter().chain(&it.must_not) {
+                regex::Regex::new(pat).unwrap_or_else(|e| panic!("{}: {e}", it.id));
+            }
+        }
         let quick = load_items(&p.with_file_name("medical-survival-quick.jsonl")).unwrap();
         assert_eq!(quick.len(), 20);
         for q in &quick {

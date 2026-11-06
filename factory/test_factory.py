@@ -53,6 +53,14 @@ class TextTests(unittest.TestCase):
         self.assertIn("druginfo", med["skip"])
 
 
+class ProcedureTests(unittest.TestCase):
+    def test_flags_procedure_cut_at_page_footer(self):
+        cut = "How to use a tourniquet: Step 1: Place it high. Step 2: Pull the strap through the buckle. August 2019 Page 3-4"
+        self.assertTrue(bp.truncated_procedure(cut, "Place something between the injured person and the ground."))
+        self.assertFalse(bp.truncated_procedure(cut, "Step 3: Twist the windlass. Step 4: Lock it."), "continues in next passage")
+        self.assertFalse(bp.truncated_procedure("Step 1: a. Step 2: b. Step 3: c. Then rest for an hour and drink water.", ""))
+
+
 class ZimTests(unittest.TestCase):
     def test_reads_a_real_zim(self):
         try:

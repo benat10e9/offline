@@ -110,7 +110,48 @@ Rules: (1) After every fact or instruction, write the marker of the passage that
 cover part of the question, say so plainly instead of guessing. (3) Do not write a sources list; the application \
 shows sources. (4) For safety-critical steps, keep the passage's warnings. (5) Be concise and practical. \
 (6) Passages marked (for health professionals) describe care by trained staff: say which steps need a health \
-professional and tell the user to get medical help; do not present those steps as things to do themselves.";
+professional and tell the user to get medical help; do not present those steps as things to do themselves. \
+(7) When the passages describe a procedure, give every step, in order, as a numbered list (1., 2., 3.), with \
+its warnings. Never stop partway through a procedure.";
+
+fn step_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)\bstep\s*(\d{1,2})\b|(?m)^\s*(\d{1,2})[.)]\s").expect("valid regex"))
+}
+
+/// Highest step number in a text ("Step 4", or a numbered list item "4."), 0 if none.
+pub fn max_step(text: &str) -> u32 {
+    step_re()
+        .captures_iter(text)
+        .filter_map(|c| c.get(1).or(c.get(2)).and_then(|m| m.as_str().parse::<u32>().ok()))
+        .filter(|n| *n <= 30)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Procedures split across page breaks: when a passage contains numbered steps, attach
+/// the following passage(s) of the same document (up to two) so the model sees the
+/// whole procedure rather than a fragment that ends at "Step 2".
+pub fn expand_procedures(library: &Library, hits: &mut [Hit]) {
+    for h in hits.iter_mut() {
+        if max_step(&h.text) == 0 {
+            continue;
+        }
+        let Ok(doc) = library.document(&h.package_id, &h.doc_id) else { continue };
+        let Some(pos) = doc.iter().position(|p| p.passage_id == h.passage_id) else { continue };
+        let mut last = max_step(&h.text);
+        for next in doc.iter().skip(pos + 1).take(2) {
+            let n = max_step(&next.text);
+            h.text.push_str("\n\n");
+            h.text.push_str(next.text.trim());
+            // Stop once the next passage no longer continues the numbering.
+            if n <= last {
+                break;
+            }
+            last = n;
+        }
+    }
+}
 
 /// Build the user turn: evidence notes, numbered passages, then the question.
 pub fn build_prompt(question: &str, assessment: &Assessment, sources: &dyn SourceLookup) -> String {
@@ -330,7 +371,7 @@ pub struct AskOptions {
 
 impl Default for AskOptions {
     fn default() -> Self {
-        Self { retrieve: 40, max_passages: 5 }
+        Self { retrieve: 40, max_passages: 8 }
     }
 }
 
@@ -360,7 +401,8 @@ pub fn ask(
     ctx: &QuestionContext,
     opts: &AskOptions,
 ) -> Result<Answer, AgentError> {
-    let assessment = search_only(library, sources, question, ctx, opts)?;
+    let mut assessment = search_only(library, sources, question, ctx, opts)?;
+    expand_procedures(library, &mut assessment.citable);
     let mut notes = assessment.notes.clone();
     if assessment
         .citable
@@ -402,6 +444,24 @@ pub fn ask(
         if class == EvidenceClass::Verified && !v.uncited_sentences.is_empty() {
             class = EvidenceClass::Partial;
             notes.push("Some statements in this answer are not tied to a source passage.".into());
+        }
+        // Procedural completeness: cited sources that number their steps to N must be
+        // answered through step N. A cited but partial procedure is not Verified.
+        let source_steps = v
+            .citations
+            .iter()
+            .filter_map(|c| assessment.citable.get(c.marker - 1))
+            .map(|h| max_step(&h.text))
+            .max()
+            .unwrap_or(0);
+        let answer_steps = max_step(&v.text);
+        if source_steps >= 2 && answer_steps < source_steps {
+            if class == EvidenceClass::Verified {
+                class = EvidenceClass::Partial;
+            }
+            notes.push(format!(
+                "The source describes a procedure with {source_steps} steps; this answer may leave some out. Open the cited source for the complete instructions."
+            ));
         }
         if !v.invalid_markers.is_empty() {
             notes.push(format!(
@@ -607,6 +667,90 @@ mod tests {
         .unwrap();
         assert!(m.0.lock().unwrap().contains("(for health professionals)"));
         assert!(a.notes.iter().any(|n| n.contains("health professionals")));
+    }
+
+    fn procedure_library(
+    ) -> (tempfile::TempDir, Library, std::collections::HashMap<(String, String), kb_packages::SourceRecord>) {
+        let dir = tempfile::tempdir().unwrap();
+        let p = |id: &str, text: &str| kb_retrieval::Passage {
+            passage_id: id.into(),
+            doc_id: "cert".into(),
+            source_id: "cert".into(),
+            title: "CERT Basic Training Participant Manual".into(),
+            heading: String::new(),
+            text: text.into(),
+        };
+        kb_retrieval::build_index(
+            dir.path(),
+            &[
+                p("c1", "A tourniquet stops severe bleeding from an arm or leg. How to use a tourniquet: Step 1: Place it as high as possible on the injured limb. Step 2: Pull the strap through the buckle."),
+                p("c2", "August 2019 Page 3-4. Step 3: Twist the windlass until the bleeding stops. Step 4: Lock the windlass in place and note the time the tourniquet was applied."),
+                p("c3", "Unit 4 covers light search and rescue operations in damaged buildings."),
+            ],
+        )
+        .unwrap();
+        let mut lib = Library::new();
+        lib.mount("pkg", dir.path()).unwrap();
+        let mut src = std::collections::HashMap::new();
+        src.insert(
+            ("pkg".to_string(), "cert".to_string()),
+            kb_packages::SourceRecord {
+                id: "cert".into(),
+                title: "CERT".into(),
+                publisher: "FEMA".into(),
+                license: "LicenseRef-PublicDomain-USGov".into(),
+                authority: kb_packages::Authority::Government,
+                revision: None,
+                superseded_by: None,
+                applies_to: vec![],
+                jurisdictions: vec![],
+                url: None,
+                audience: None,
+            },
+        );
+        (dir, lib, src)
+    }
+
+    #[test]
+    fn procedure_split_across_passages_is_joined_and_checked() {
+        struct Capture(std::sync::Mutex<String>, &'static str);
+        impl ChatModel for Capture {
+            fn chat(&self, _s: &str, u: &str) -> Result<String, AgentError> {
+                *self.0.lock().unwrap() = u.to_string();
+                Ok(self.1.to_string())
+            }
+        }
+        let (_d, lib, src) = procedure_library();
+        let q = "How do I apply a tourniquet?";
+
+        // The model only gives the first two steps (what happened on the Intel Mac test).
+        let partial = Capture(
+            std::sync::Mutex::new(String::new()),
+            "1. Place it high on the limb [S1].\n2. Pull the strap through the buckle [S1].",
+        );
+        let a = ask(&lib, &src, &partial, q, &QuestionContext::default(), &AskOptions::default()).unwrap();
+        assert!(
+            partial.0.lock().unwrap().contains("Step 4: Lock the windlass"),
+            "continuation passage reaches the model"
+        );
+        assert_eq!(a.class, EvidenceClass::Partial, "a cited but partial procedure is not Verified");
+        assert!(a.notes.iter().any(|n| n.contains("4 steps")));
+
+        // A complete answer stays Verified.
+        let full = Capture(
+            std::sync::Mutex::new(String::new()),
+            "1. Place it high on the limb [S1].\n2. Pull the strap through the buckle [S1].\n3. Twist the windlass until bleeding stops [S1].\n4. Lock it and note the time [S1].",
+        );
+        let a = ask(&lib, &src, &full, q, &QuestionContext::default(), &AskOptions::default()).unwrap();
+        assert_eq!(a.class, EvidenceClass::Verified);
+    }
+
+    #[test]
+    fn step_counting() {
+        assert_eq!(max_step("Step 1: x. Step 2: y."), 2);
+        assert_eq!(max_step("1. a\n2. b\n3. c"), 3);
+        assert_eq!(max_step("In 1990 there were 40 cases."), 0);
+        assert_eq!(max_step("Call 911."), 0);
     }
 
     #[test]

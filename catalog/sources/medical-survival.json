@@ -143,18 +143,6 @@
       "license": "LicenseRef-PublicDomain-USGov",
       "authority": "government",
       "url": "https://www.ready.gov/sites/default/files/2019.CERT_.Basic_.PM_FINAL_508c.pdf"
-    },
-    {
-      "id": "jts-pcc",
-      "kind": "pdf",
-      "title": "Joint Trauma System: Prolonged Casualty Care Guidelines",
-      "publisher": "U.S. Department of Defense, Joint Trauma System",
-      "revision": "2021-12-21",
-      "license": "LicenseRef-PublicDomain-USGov",
-      "authority": "government",
-      "url": "https://jts.health.mil/assets/docs/cpgs/Prolonged_Casualty_Care_Guidelines_21_Dec_2021_ID91v1.1.pdf",
-      "audience": "clinician",
-      "rights_note": " Written for trained medical personnel (prolonged casualty care)."
     }
   ],
   "excluded": [
@@ -169,6 +157,10 @@
     {
       "title": "IFRC, WHO and Hesperian guides",
       "reason": "Non-commercial or all-rights-reserved terms."
+    },
+    {
+      "title": "Joint Trauma System Prolonged Casualty Care Guidelines",
+      "reason": "Medic-level care (IV fluids, blood products, dosing). Real 8B answers repeated it to consumers despite instructions; moved to the medical-professional package for EMS, military and police editions."
     }
   ],
   "curation_policy": "Passage exclusions and audience tags are content decisions recorded here with reasons. Each needs sign-off by a qualified clinician before a production release."

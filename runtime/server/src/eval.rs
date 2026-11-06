@@ -23,6 +23,38 @@ pub struct EvalItem {
     pub jurisdiction: Option<String>,
 }
 
+enum Match {
+    None,
+    OnlyNegated,
+    Affirmative,
+}
+
+fn negation() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"(?i)\b(do not|don't|dont|never|avoid|no longer|should not|shouldn't|must not|not)\b")
+            .expect("valid regex")
+    })
+}
+
+/// A banned pattern counts only when some sentence states it without a preceding negation.
+fn classify_match(re: &regex::Regex, text: &str) -> Match {
+    let mut seen = false;
+    for sentence in text.split(['.', '!', '?', '\n']) {
+        for m in re.find_iter(sentence) {
+            seen = true;
+            if !negation().is_match(&sentence[..m.start()]) {
+                return Match::Affirmative;
+            }
+        }
+    }
+    if seen {
+        Match::OnlyNegated
+    } else {
+        Match::None
+    }
+}
+
 pub fn load_items(path: &Path) -> anyhow::Result<Vec<EvalItem>> {
     let f = std::fs::File::open(path)?;
     let mut out = Vec::new();
@@ -49,6 +81,9 @@ pub struct EvalResult {
     pub answered: Option<bool>,
     pub citations: Option<usize>,
     pub violations: Vec<String>,
+    /// Banned patterns that appeared only inside a negation ("do not cut the bite"):
+    /// correct advice, reported for transparency, not counted as violations.
+    pub negated_matches: Vec<String>,
     pub seconds: f64,
     pub answer: Option<String>,
     /// The passages the answer cites, as (marker, title, text), for human review of
@@ -142,11 +177,15 @@ pub fn run_with_progress(
         let source_hit =
             (!it.expect_sources.is_empty()).then(|| top_sources.iter().any(|s| it.expect_sources.contains(s)));
         let mut violations = Vec::new();
+        let mut negated_matches = Vec::new();
         if let Some(text) = &answer {
             for pat in &it.must_not {
                 match regex::Regex::new(pat) {
-                    Ok(re) if re.is_match(text) => violations.push(pat.clone()),
-                    Ok(_) => {}
+                    Ok(re) => match classify_match(&re, text) {
+                        Match::Affirmative => violations.push(pat.clone()),
+                        Match::OnlyNegated => negated_matches.push(pat.clone()),
+                        Match::None => {}
+                    },
                     Err(e) => violations.push(format!("bad pattern {pat}: {e}")),
                 }
             }
@@ -161,6 +200,7 @@ pub fn run_with_progress(
             answered,
             citations,
             violations,
+            negated_matches,
             seconds,
             answer,
             cited,
@@ -216,6 +256,22 @@ mod tests {
         assert_eq!(r.summary.source_expectations, 2);
         assert_eq!(r.summary.source_hits, 1, "superseded Rev A must not be a source");
         assert_eq!(r.summary.out_of_scope_wrongly_verified, 0);
+    }
+
+    #[test]
+    fn negated_advice_is_not_a_violation() {
+        let re = regex::Regex::new(r"(?i)(suck|cut) (out )?the venom|cut the (bite|wound)").unwrap();
+        assert!(matches!(
+            classify_match(&re, "Do not attempt to cut open the bite or suck out the venom."),
+            Match::OnlyNegated
+        ));
+        assert!(matches!(classify_match(&re, "Never cut the wound."), Match::OnlyNegated));
+        assert!(matches!(classify_match(&re, "Stay calm. Cut the bite and suck out the venom."), Match::Affirmative));
+        assert!(
+            matches!(classify_match(&re, "Do not panic. Then cut the wound open."), Match::Affirmative),
+            "negation in another sentence does not excuse it"
+        );
+        assert!(matches!(classify_match(&re, "Keep the limb still."), Match::None));
     }
 
     #[test]

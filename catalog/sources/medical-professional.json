@@ -1,0 +1,29 @@
+{
+  "package": {
+    "id": "medical-professional",
+    "version": "0.1.0-dev",
+    "title": "Medical guidance for trained responders (U.S. government sources)",
+    "editions": [
+      "ems",
+      "military",
+      "police"
+    ]
+  },
+  "rights_policy": "Only U.S. federal government works (17 U.S.C. 105) in this package. Third-party material inside them is excluded where identified. Checked 2026-11-05; recheck before each release.",
+  "curation_policy": "Professional-audience material. Not installed in consumer editions.",
+  "sources": [
+    {
+      "id": "jts-pcc",
+      "kind": "pdf",
+      "title": "Joint Trauma System: Prolonged Casualty Care Guidelines",
+      "publisher": "U.S. Department of Defense, Joint Trauma System",
+      "revision": "2021-12-21",
+      "license": "LicenseRef-PublicDomain-USGov",
+      "authority": "government",
+      "url": "https://jts.health.mil/assets/docs/cpgs/Prolonged_Casualty_Care_Guidelines_21_Dec_2021_ID91v1.1.pdf",
+      "audience": "clinician",
+      "rights_note": " Written for trained medical personnel (prolonged casualty care)."
+    }
+  ],
+  "excluded": []
+}
